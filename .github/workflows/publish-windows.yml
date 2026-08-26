@@ -1,0 +1,168 @@
+name: Publish accepted Windows release
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: "Successful Desktop Release Candidate run ID from the private app repository"
+        required: true
+        type: string
+      source_commit:
+        description: "Exact 40-character app commit built by that run"
+        required: true
+        type: string
+      version:
+        description: "Exact candidate version, for example 0.1.0 or 0.1.0-rc.7"
+        required: true
+        type: string
+      publication:
+        description: "GitHub release visibility"
+        required: true
+        default: draft
+        type: choice
+        options:
+          - draft
+          - prerelease
+          - stable
+      confirmation:
+        description: "Type the exact version again"
+        required: true
+        type: string
+
+permissions:
+  actions: none
+  contents: write
+  id-token: none
+
+concurrency:
+  group: windows-public-release
+  cancel-in-progress: false
+
+env:
+  SOURCE_REPOSITORY: mafazsyed/kolvra-app
+  RELEASE_REPOSITORY: Kausora-Technologies/kolvra-releases
+
+jobs:
+  publish:
+    name: Verify and publish Windows x64
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: production-release
+    steps:
+      - name: Checkout release controls
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Validate publication request
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+          PUBLICATION: ${{ inputs.publication }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-rc\.[1-9][0-9]*)?$ ]]; then
+            echo "Version must match X.Y.Z or X.Y.Z-rc.N." >&2
+            exit 1
+          fi
+          if [[ ! "$SOURCE_COMMIT" =~ ^[a-f0-9]{40}$ ]]; then
+            echo "Source commit must be a lowercase 40-character SHA." >&2
+            exit 1
+          fi
+          if [[ "$CONFIRMATION" != "$VERSION" ]]; then
+            echo "Confirmation must exactly match the release version." >&2
+            exit 1
+          fi
+          if [[ "$PUBLICATION" == "stable" && "$VERSION" == *-rc.* ]]; then
+            echo "An RC version cannot be published as stable." >&2
+            exit 1
+          fi
+          if [[ "$PUBLICATION" == "prerelease" && "$VERSION" != *-rc.* ]]; then
+            echo "A prerelease must use an RC version." >&2
+            exit 1
+          fi
+
+      - name: Verify private source run
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.KOLVRA_APP_READ_TOKEN }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$GH_TOKEN" ]]; then
+            echo "KOLVRA_APP_READ_TOKEN is not configured." >&2
+            exit 1
+          fi
+          run_json="$(gh run view "$SOURCE_RUN_ID" --repo "$SOURCE_REPOSITORY" \
+            --json conclusion,event,headSha,status,url,workflowName)"
+          [[ "$(jq -r .workflowName <<<"$run_json")" == "Desktop Release Candidate" ]]
+          [[ "$(jq -r .event <<<"$run_json")" == "workflow_dispatch" ]]
+          [[ "$(jq -r .status <<<"$run_json")" == "completed" ]]
+          [[ "$(jq -r .conclusion <<<"$run_json")" == "success" ]]
+          [[ "$(jq -r .headSha <<<"$run_json")" == "$SOURCE_COMMIT" ]]
+          echo "Verified private source run: $(jq -r .url <<<"$run_json")" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Download accepted candidate
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.KOLVRA_APP_READ_TOKEN }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+        run: |
+          set -euo pipefail
+          mkdir -p staging
+          gh run download "$SOURCE_RUN_ID" --repo "$SOURCE_REPOSITORY" \
+            --name desktop-candidate-win-x64 --dir staging
+
+      - name: Verify provenance, updater feed, and every byte
+        run: >-
+          node scripts/validate-windows-release.mjs staging
+          "${{ inputs.version }}"
+          "$SOURCE_REPOSITORY"
+          "${{ inputs.source_commit }}"
+          "$RELEASE_REPOSITORY"
+
+      - name: Require a new release tag
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if gh release view "v$VERSION" --repo "$RELEASE_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release v$VERSION already exists; published releases are immutable." >&2
+            exit 1
+          fi
+
+      - name: Publish verified assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          PUBLICATION: ${{ inputs.publication }}
+        run: |
+          set -euo pipefail
+          tag="v$VERSION"
+          notes="$RUNNER_TEMP/release-notes.md"
+          {
+            echo "Kolvra for Windows x64."
+            echo
+            echo "This release was promoted from an accepted, signed private candidate."
+            echo "Its public candidate manifest and SHA256SUMS bind every asset to app commit \`$SOURCE_COMMIT\` and source run \`$SOURCE_RUN_ID\`."
+          } > "$notes"
+          mapfile -d '' assets < <(find staging -maxdepth 1 -type f -print0 | sort -z)
+          flags=()
+          case "$PUBLICATION" in
+            draft) flags+=(--draft) ;;
+            prerelease) flags+=(--prerelease) ;;
+            stable) ;;
+            *) exit 1 ;;
+          esac
+          gh release create "$tag" "${assets[@]}" \
+            --repo "$RELEASE_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "Kolvra $VERSION" \
+            --notes-file "$notes" \
+            "${flags[@]}"

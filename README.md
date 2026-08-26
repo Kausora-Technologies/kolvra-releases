@@ -14,5 +14,23 @@ Each release will include:
 - `SHA256SUMS` and per-target candidate manifests;
 - bundled licence and third-party notices.
 
+## Maintainer promotion
+
+Windows publication is a two-stage, artifact-only promotion. The private app
+repository first builds and signs an exact candidate using the `public-release`
+updater feed. The manual `Publish accepted Windows release` workflow then:
+
+- requires approval through the `production-release` GitHub environment;
+- reads the private candidate using the scoped `KOLVRA_APP_READ_TOKEN` secret;
+- verifies the source run and commit, Azure signing mode, public updater feed,
+  complete file set, manifest sizes, and every SHA-256 digest;
+- creates an immutable draft, prerelease, or stable GitHub release without
+  copying application source into this repository.
+
+Before first use, configure the environment with a required reviewer and add a
+fine-grained token that has read-only Actions and Contents access to the private
+`mafazsyed/kolvra-app` repository. A production release must be built from an
+exact commit that already passed the app repository's manual CI workflow.
+
 Do not download Kolvra from an unofficial mirror. Security reports should be
 sent privately to [contact@kolvra.com](mailto:contact@kolvra.com).
