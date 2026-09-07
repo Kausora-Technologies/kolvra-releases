@@ -3,9 +3,10 @@
 This repository is the public download and update origin for accepted Kolvra
 desktop releases. Product source and backend deployment records remain private.
 
-An artifact appears here only after its exact candidate passes platform signing
-or checksum verification, clean installation, automatic-update, retained-data,
-and recovery acceptance.
+An artifact appears here only after signing and artifact integrity verification,
+with installation, update, retained-data and recovery acceptance evidence. A
+maintainer may explicitly reuse completed acceptance and focused checks for a
+follow-up release; the source workflow records that decision and its baseline.
 
 Each release will include:
 
@@ -13,6 +14,7 @@ Each release will include:
 - Electron update metadata and differential-download blockmaps;
 - `SHA256SUMS` and per-target candidate manifests;
 - bundled licence and third-party notices.
+- a separate, optional Windows Subsystem for Linux runtime when applicable.
 
 ## Maintainer promotion
 
@@ -29,14 +31,15 @@ updater feed. The manual `Publish accepted Windows release` workflow then:
 
 Before first use, configure the environment with a required reviewer and add a
 fine-grained token that has read-only Actions and Contents access to the private
-`mafazsyed/kolvra-app` repository. A production release must be built from an
-exact commit that already passed the app repository's manual CI workflow.
+`mafazsyed/kolvra-app` repository. Production candidates normally require a
+successful manual CI run on the exact source commit. Explicit verification
+reuse requires a successful ancestor candidate and maintainer authorization
+with the completed checks recorded in the source workflow summary. Signing,
+artifact integrity and protected publication are always required.
 
-The signed desktop updater uses this repository directly. Customer-facing
-website downloads use the same accepted installer bytes mirrored to the
-versioned `https://downloads.kolvra.com/windows/` origin with an attachment
-header, so clicking Download starts the installer download without visiting a
-GitHub page.
+The signed desktop updater and website download button use the accepted assets
+in this repository. The website links directly to the versioned installer asset,
+whose attachment header starts the download without visiting a GitHub page.
 
 Do not download Kolvra from an unofficial mirror. Security reports should be
 sent privately to [contact@kolvra.com](mailto:contact@kolvra.com).
