@@ -30,6 +30,18 @@ function validateIdentity(version, commit, fingerprint) {
   assert.match(fingerprint, /^[A-F0-9]{40}$/);
 }
 
+function validateDebian(directory, version, artifact, evidence) {
+  const control = execFileSync('dpkg-deb', ['--field', path.join(directory, artifact.name)], { encoding: 'utf8' });
+  const field = name => new RegExp(`^${name}: (.+)$`, 'm').exec(control)?.[1];
+  assert.equal(field('Package'), 'kolvra', 'Unexpected Debian package name.');
+  assert.equal(field('Version'), version, 'Debian version must match the release.');
+  assert.equal(field('Architecture'), 'amd64', 'Debian architecture must be amd64.');
+  assert.equal(evidence.debian?.artifactSha256, artifact.sha256, 'Debian acceptance must describe these exact bytes.');
+  for (const check of ['installation', 'startup', 'terminal', 'localInference', 'upgrade', 'uninstall', 'persistence']) {
+    assert.equal(evidence.debian.checks?.[check], 'passed', `Missing Debian acceptance: ${check}`);
+  }
+}
+
 async function validateUpdater(directory, version, artifact) {
   const updater = await readFile(path.join(directory, 'latest-linux.yml'), 'utf8');
   const values = key => [...updater.matchAll(new RegExp(`^\\s*(?:- )?${key}: ([^\\r\\n]+)$`, 'gm'))].map(match => match[1].trim().replace(/^['"]|['"]$/g, ''));
@@ -43,7 +55,9 @@ async function validateUpdater(directory, version, artifact) {
 
 export async function prepareLinuxRelease({ directory, version, commit, keyHome, fingerprint, evidencePath }) {
   validateIdentity(version, commit, fingerprint);
-  assert.deepEqual((await readdir(directory)).sort(), [`Kolvra-${version}-x86_64.AppImage`, 'latest-linux.yml'].sort(), 'Prepare a fresh directory containing only the AppImage and updater metadata.');
+  const initialNames = await readdir(directory);
+  const debianName = `Kolvra-${version}-amd64.deb`;
+  assert.deepEqual(initialNames.sort(), [`Kolvra-${version}-x86_64.AppImage`, 'latest-linux.yml', ...(initialNames.includes(debianName) ? [debianName] : [])].sort(), 'Prepare a fresh directory containing only the AppImage, optional Debian package, and updater metadata.');
   const artifacts = [];
   for (const name of await readdir(directory)) {
     const file = path.join(directory, name);
@@ -57,11 +71,14 @@ export async function prepareLinuxRelease({ directory, version, commit, keyHome,
   const evidence = JSON.parse(await readFile(evidencePath, 'utf8'));
   assert.equal(evidence.artifactSha256, artifact.sha256, 'Acceptance must describe these exact bytes.');
   for (const check of requiredChecks) assert.equal(evidence.checks?.[check], 'passed', `Missing acceptance: ${check}`);
+  const debian = artifacts.find(file => file.name === debianName);
+  if (debian) validateDebian(directory, version, debian, evidence);
   const manifest = { schema_version: 1, candidate_version: version, source: { repository: 'mafazsyed/kolvra-app', commit }, target: { platform: 'linux', architecture: 'x64', signing: 'openpgp-detached', signing_fingerprint: fingerprint }, build_environment: 'local', update_feed: 'github:Kausora-Technologies/kolvra-releases', artifacts };
   await writeFile(path.join(directory, manifestName), JSON.stringify(manifest, null, 2) + '\n');
   await copyFile(evidencePath, path.join(directory, evidenceName));
   await writeFile(path.join(directory, publicKeyName), gpg(['--homedir', keyHome, '--armor', '--export', fingerprint]));
   gpg(['--homedir', keyHome, '--local-user', fingerprint, '--armor', '--detach-sign', '--output', path.join(directory, artifact.name + '.asc'), path.join(directory, artifact.name)]);
+  if (debian) gpg(['--homedir', keyHome, '--local-user', fingerprint, '--armor', '--detach-sign', '--output', path.join(directory, debian.name + '.asc'), path.join(directory, debian.name)]);
   const checksums = [];
   for (const name of (await readdir(directory)).sort()) checksums.push(`${await digest(path.join(directory, name))}  ${name}`);
   await writeFile(path.join(directory, checksumName), checksums.join('\n') + '\n');
@@ -102,7 +119,9 @@ export async function validateLinuxRelease({ directory, fingerprint, trustedPubl
     assert.equal(manifest.update_feed, 'github:Kausora-Technologies/kolvra-releases');
     assert.deepEqual(manifest.target, { platform: 'linux', architecture: 'x64', signing: 'openpgp-detached', signing_fingerprint: fingerprint });
     const artifactName = `Kolvra-${manifest.candidate_version}-x86_64.AppImage`;
-    assert.deepEqual(manifest.artifacts.map(item => item.name).sort(), [artifactName, 'latest-linux.yml'].sort());
+    const debianName = `Kolvra-${manifest.candidate_version}-amd64.deb`;
+    const debian = manifest.artifacts.find(item => item.name === debianName);
+    assert.deepEqual(manifest.artifacts.map(item => item.name).sort(), [artifactName, 'latest-linux.yml', ...(debian ? [debianName] : [])].sort());
     for (const artifact of manifest.artifacts) {
       assert.equal(artifact.sha256, entries.get(artifact.name));
       assert.equal(artifact.bytes, (await lstat(path.join(directory, artifact.name))).size);
@@ -113,6 +132,10 @@ export async function validateLinuxRelease({ directory, fingerprint, trustedPubl
     const evidence = JSON.parse(await readFile(path.join(directory, evidenceName), 'utf8'));
     assert.equal(evidence.artifactSha256, artifact.sha256);
     for (const check of requiredChecks) assert.equal(evidence.checks?.[check], 'passed', `Missing acceptance: ${check}`);
+    if (debian) {
+      validateDebian(directory, manifest.candidate_version, debian, evidence);
+      verify(debianName + '.asc', debianName);
+    }
     return manifest;
   } finally {
     await rm(keyHome, { recursive: true, force: true });

@@ -17,7 +17,7 @@ These are public build configuration, not service credentials. Verify with:
 
 ```sh
 vp exec node scripts/verify-production-desktop-public-config.ts
-vp run dist:desktop:artifact --platform linux --target AppImage --arch x64 \
+vp run dist:desktop:linux:packages \
   --build-version VERSION --output-dir /absolute/artifacts --keep-stage
 ```
 
@@ -64,6 +64,21 @@ the corresponding behavior:
 }
 ```
 
+For a Debian package, also record `debian.artifactSha256` and
+`debian.checks` with `installation`, `startup`, `terminal`, `localInference`,
+`upgrade`, `uninstall`, and `persistence`. Each must be `passed` after testing.
+Use a private lower-version package for the first Debian upgrade test and label
+that baseline clearly. Test dependency resolution on both Ubuntu and Debian.
+The `.deb` uses manual package upgrades; AppImage remains the in-app-update path.
+`latest-linux.yml` must list only the AppImage.
+
+Run representative distributions in local KVM virtual machines using verified
+official images. Record the image checksums, guest versions, memory, display
+server, model and inference backend. A minimal X11 guest validates those paths;
+it does not establish Wayland, stock desktop, or physical GPU compatibility.
+Retain the detailed version matrix in release evidence rather than presenting
+one Ubuntu version as the whole Linux download.
+
 ## Sign and verify
 
 The trusted Linux signing fingerprint is
@@ -75,7 +90,7 @@ rotation before expiry, rather than silently trusting a key from a downloaded
 bundle.
 
 Prepare a fresh directory containing only the final
-`Kolvra-VERSION-x86_64.AppImage` and `latest-linux.yml`, then run from this repository:
+`Kolvra-VERSION-x86_64.AppImage`, `Kolvra-VERSION-amd64.deb`, and `latest-linux.yml`, then run from this repository:
 
 ```sh
 node --test scripts/linux-release.test.mjs scripts/validate-windows-release.test.mjs
@@ -100,7 +115,7 @@ assets, then publish it. A maintainer-authorized first Linux release may append
 new Linux-only assets to an existing stable version without changing Windows
 bytes. Record the exact Linux source commit separately in the release notes.
 
-Upload the AppImage, its `.asc`, `latest-linux.yml`, `candidate-linux-x64.json`,
+Upload the AppImage and Debian package, their `.asc` signatures, `latest-linux.yml`, `candidate-linux-x64.json`,
 `acceptance-linux-x64.json`, public key, `SHA256SUMS-linux-x64`, and its `.asc`.
 Do not upload builder debug logs or private profiles. Download those exact assets
 into a fresh directory and run the validator again. Check update discovery
@@ -114,3 +129,10 @@ Every future stable release must preserve a usable `latest-linux.yml` and its
 referenced artifact alongside Windows update metadata. A later Windows-only
 release without Linux metadata can strand Linux update discovery at the latest
 GitHub release; coordinate platform publication before advancing that release.
+
+If only one platform changes version, carry the other platform's existing
+artifacts and update metadata into the new stable release unchanged. Keep their
+original filenames and versions and explain this in the release notes. The
+updater resolves filenames against the latest release tag, so leaving the old
+platform's files solely on an earlier tag is insufficient. Verify copied bytes
+against the original release checksums before publishing.

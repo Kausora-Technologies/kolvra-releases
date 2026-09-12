@@ -7,7 +7,7 @@ import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { prepareLinuxRelease, validateLinuxRelease } from './linux-release.mjs';
 
-test('Linux release verifies the signer, exact bytes, metadata and acceptance', async t => {
+for (const withDebian of [false, true]) test(`Linux release ${withDebian ? 'with Debian' : 'AppImage only'} verifies signer, bytes, metadata and acceptance`, async t => {
   const root = await mkdtemp(path.join(tmpdir(), 'kolvra-linux-release-test-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const keyHome = path.join(root, 'keys');
@@ -28,11 +28,28 @@ test('Linux release verifies the signer, exact bytes, metadata and acceptance', 
   const evidencePath = path.join(root, 'evidence.json');
   const evidence = { artifactSha256: sha256, checks: Object.fromEntries(['packagedStartup', 'assistantGateway', 'terminal', 'localInference', 'restartPersistence', 'updater'].map(check => [check, 'passed'])) };
   await writeFile(evidencePath, JSON.stringify(evidence));
+  let debianPath;
+  let debianPayload;
+  if (withDebian) {
+    const packageRoot = path.join(root, 'deb');
+    await mkdir(path.join(packageRoot, 'DEBIAN'), { recursive: true });
+    await writeFile(path.join(packageRoot, 'DEBIAN/control'), 'Package: kolvra\nVersion: 1.2.3\nArchitecture: amd64\nMaintainer: Release Test <release@example.test>\nDescription: Release verification fixture\n');
+    debianPath = path.join(directory, 'Kolvra-1.2.3-amd64.deb');
+    execFileSync('dpkg-deb', ['--build', '--root-owner-group', packageRoot, debianPath], { stdio: 'ignore' });
+    debianPayload = await readFile(debianPath);
+    evidence.debian = { artifactSha256: createHash('sha256').update(debianPayload).digest('hex'), checks: Object.fromEntries(['installation', 'startup', 'terminal', 'localInference', 'upgrade', 'uninstall', 'persistence'].map(check => [check, 'passed'])) };
+    await writeFile(evidencePath, JSON.stringify(evidence));
+  }
   const prepare = () => prepareLinuxRelease({ directory, version: '1.2.3', commit: 'a'.repeat(40), keyHome, fingerprint, evidencePath });
   const verify = () => validateLinuxRelease({ directory, fingerprint, trustedPublicKey });
   await t.test('requires acceptance for the exact artifact', async () => {
     await writeFile(evidencePath, JSON.stringify({ ...evidence, artifactSha256: '0'.repeat(64) }));
     await assert.rejects(prepare, /Acceptance must describe these exact bytes/);
+    await writeFile(evidencePath, JSON.stringify(evidence));
+  });
+  if (withDebian) await t.test('requires Debian acceptance for the exact package', async () => {
+    await writeFile(evidencePath, JSON.stringify({ ...evidence, debian: { ...evidence.debian, artifactSha256: '0'.repeat(64) } }));
+    await assert.rejects(prepare, /Debian acceptance must describe these exact bytes/);
     await writeFile(evidencePath, JSON.stringify(evidence));
   });
   await prepare();
@@ -46,6 +63,11 @@ test('Linux release verifies the signer, exact bytes, metadata and acceptance', 
     await writeFile(artifact, 'modified bytes');
     await assert.rejects(verify, /Digest mismatch/);
     await writeFile(artifact, payload);
+  });
+  if (withDebian) await t.test('rejects a modified Debian package', async () => {
+    await writeFile(debianPath, 'modified package');
+    await assert.rejects(verify, /Digest mismatch/);
+    await writeFile(debianPath, debianPayload);
   });
   await t.test('rejects modified updater metadata', async () => {
     const updater = path.join(directory, 'latest-linux.yml');
