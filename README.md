@@ -10,7 +10,7 @@ follow-up release; the source workflow records that decision and its baseline.
 
 Each release will include:
 
-- accepted macOS, Windows, and Linux desktop packages;
+- accepted packages for the supported desktop platforms;
 - Electron update metadata and differential-download blockmaps;
 - `SHA256SUMS` and per-target candidate manifests;
 - bundled licence and third-party notices.
@@ -40,6 +40,11 @@ artifact integrity and protected publication are always required.
 The signed desktop updater and website download button use the accepted assets
 in this repository. The website links directly to the versioned installer asset,
 whose attachment header starts the download without visiting a GitHub page.
+
+Linux releases can be built, accepted, signed, and published entirely on a local
+desktop, without GitHub Actions. Maintainers should follow
+[the local Linux release procedure](docs/linux-release.md). Customers can use
+[the Linux installation and signature guide](docs/linux-download.md).
 
 Do not download Kolvra from an unofficial mirror. Security reports should be
 sent privately to [contact@kolvra.com](mailto:contact@kolvra.com).
