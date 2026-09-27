@@ -46,5 +46,10 @@ desktop, without GitHub Actions. Maintainers should follow
 [the local Linux release procedure](docs/linux-release.md). Customers can use
 [the Linux installation and signature guide](docs/linux-download.md).
 
+macOS releases use Developer ID signing and Apple notarization. Follow
+[the local macOS release procedure](docs/macos-release.md) for separate Apple
+Silicon and Intel artifacts and one merged updater manifest. Assemble all
+supported platforms in one draft before advancing the stable release.
+
 Do not download Kolvra from an unofficial mirror. Security reports should be
 sent privately to [contact@kolvra.com](mailto:contact@kolvra.com).
