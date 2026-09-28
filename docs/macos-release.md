@@ -1,9 +1,11 @@
 # Local macOS releases
 
 Build on a Mac using the private app repository's pinned dependencies, Xcode
-command-line tools, and a clean accepted source commit. Use the same version
-and commit as the Windows and Linux release. Keep credentials and acceptance
-profiles outside every repository. This procedure does not use GitHub Actions.
+command-line tools, and a clean accepted source commit. Record the source commit
+and version for each platform. When only macOS advances, preserve the previously
+released Windows and Linux files and updater manifests unchanged. Keep credentials
+and acceptance profiles outside every repository. This procedure does not use
+GitHub Actions.
 
 ## Signing setup
 
@@ -12,6 +14,9 @@ private key available in the signing Keychain. This is not a Mac App Store
 distribution certificate. Confirm the intended company and team with
 `security find-identity -v -p codesigning`; export an encrypted backup of the
 identity and keep its password separately in a password manager.
+If selecting an identity with `CSC_NAME`, use the company-and-team portion
+(for example, `Company Name (TEAMID)`), without the `Developer ID Application:`
+prefix; electron-builder chooses that certificate type itself.
 
 Configure Apple notarization using a dedicated App Store Connect team API key
 with the App Manager role recommended by [Electron's notarization guide](https://github.com/electron/notarize#usage-with-app-store-connect-api-key),
@@ -30,10 +35,12 @@ not enable passkeys or publish an App Store listing.
 
 Set the production public configuration documented in the private app's
 `docs/operations/release.md`, including the public release repository as the
-updater feed. Run its configuration validator, then build into separate fresh
-directories so architecture manifests cannot overwrite each other:
+updater feed. Run its configuration validator and temporarily align the build
+checkout's package versions, then build into separate fresh directories so
+architecture manifests cannot overwrite each other:
 
 ```sh
+vp exec node scripts/update-release-package-versions.ts VERSION
 vp run dist:desktop:dmg:arm64 --signed --build-version VERSION --output-dir /absolute/mac-arm64
 vp run dist:desktop:dmg:x64 --signed --build-version VERSION --output-dir /absolute/mac-x64
 ```
@@ -41,6 +48,9 @@ vp run dist:desktop:dmg:x64 --signed --build-version VERSION --output-dir /absol
 These commands emit DMG installers and ZIP updater packages with publishing
 disabled. The build must complete both signing and notarization. Retain Apple's
 successful submission evidence. An unsigned internal build is not publishable.
+Restore the saved package manifests after the build; do not commit the temporary
+version edits. Confirm that Settings, the backend, and the native app all report
+the intended release version.
 
 Mount each DMG and separately extract its ZIP. Verify the app from both:
 
