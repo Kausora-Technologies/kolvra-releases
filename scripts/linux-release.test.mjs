@@ -5,7 +5,32 @@ import { createHash } from 'node:crypto';
 import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
-import { prepareLinuxRelease, validateLinuxRelease } from './linux-release.mjs';
+import { prepareLinuxRelease, validateLinuxRelease, validateUpdater } from './linux-release.mjs';
+
+test('shared Linux updater validates each package and preserves old feeds', async t => {
+  const root = await mkdtemp(path.join(tmpdir(), 'kolvra-linux-feed-test-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const payloads = [Buffer.from('AppImage bytes'), Buffer.from('different Debian bytes')];
+  const artifacts = [{ name: 'Kolvra-0.3.13-x86_64.AppImage', bytes: payloads[0].length }, { name: 'Kolvra-0.3.13-amd64.deb', bytes: payloads[1].length }];
+  const hashes = payloads.map(bytes => createHash('sha512').update(bytes).digest('base64'));
+  for (const [index, artifact] of artifacts.entries()) await writeFile(path.join(root, artifact.name), payloads[index]);
+  const entry = index => `  - url: ${artifacts[index].name}\n    sha512: ${hashes[index]}\n    size: ${artifacts[index].bytes}\n`;
+  const feed = indices => `version: 0.3.13\nfiles:\n${indices.map(entry).join('')}path: ${artifacts[0].name}\nsha512: ${hashes[0]}\nreleaseDate: '2026-10-10T00:00:00Z'\n`;
+  const check = async (text, version = '0.3.13') => {
+    await writeFile(path.join(root, 'latest-linux.yml'), text);
+    return validateUpdater(root, version, ...artifacts);
+  };
+  await t.test('accepts both package orders', async () => { await check(feed([0, 1])); await check(feed([1, 0])); });
+  await t.test('rejects omitted Debian package', () => assert.rejects(() => check(feed([0])), /each accepted package/));
+  await t.test('rejects duplicate package', () => assert.rejects(() => check(feed([0, 1, 1])), /each accepted package/));
+  await t.test('rejects wrong Debian digest', () => assert.rejects(() => check(feed([0, 1]).replace(hashes[1], hashes[0])), /digest must match/));
+  await t.test('rejects wrong Debian size', () => assert.rejects(() => check(feed([0, 1]).replace(`size: ${artifacts[1].bytes}`, 'size: 1')), /size must match/));
+  await t.test('rejects external URL', () => assert.rejects(() => check(feed([0, 1]).replace(`url: ${artifacts[1].name}`, 'url: https://example.test/package.deb')), /each accepted package/));
+  await t.test('rejects duplicate YAML field', () => assert.rejects(() => check(feed([0, 1]) + 'path: other.AppImage\n'), /Duplicate updater field/));
+  await t.test('rejects aliases and unexpected mapping', () => assert.rejects(() => check(feed([0, 1]) + '<<: *other\n'), /Unsupported updater metadata/));
+  await t.test('preserves the legacy AppImage fallback', () => assert.rejects(() => check(feed([0, 1]).replace(`path: ${artifacts[0].name}`, `path: ${artifacts[1].name}`)), /Legacy updater path/));
+  await t.test('accepts published older AppImage-only feed', () => check(feed([0]).replace('version: 0.3.13', 'version: 0.3.11'), '0.3.11'));
+});
 
 for (const withDebian of [false, true]) test(`Linux release ${withDebian ? 'with Debian' : 'AppImage only'} verifies signer, bytes, metadata and acceptance`, async t => {
   const root = await mkdtemp(path.join(tmpdir(), 'kolvra-linux-release-test-'));
@@ -37,6 +62,10 @@ for (const withDebian of [false, true]) test(`Linux release ${withDebian ? 'with
     debianPath = path.join(directory, 'Kolvra-1.2.3-amd64.deb');
     execFileSync('dpkg-deb', ['--build', '--root-owner-group', packageRoot, debianPath], { stdio: 'ignore' });
     debianPayload = await readFile(debianPath);
+    const debianSha512 = createHash('sha512').update(debianPayload).digest('base64');
+    const updaterPath = path.join(directory, 'latest-linux.yml');
+    const updater = await readFile(updaterPath, 'utf8');
+    await writeFile(updaterPath, updater.replace('\npath:', `\n  - url: Kolvra-1.2.3-amd64.deb\n    sha512: ${debianSha512}\n    size: ${debianPayload.length}\npath:`));
     evidence.debian = { artifactSha256: createHash('sha256').update(debianPayload).digest('hex'), checks: Object.fromEntries(['installation', 'startup', 'terminal', 'localInference', 'upgrade', 'uninstall', 'persistence'].map(check => [check, 'passed'])) };
     await writeFile(evidencePath, JSON.stringify(evidence));
   }

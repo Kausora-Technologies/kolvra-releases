@@ -42,15 +42,61 @@ function validateDebian(directory, version, artifact, evidence) {
   }
 }
 
-async function validateUpdater(directory, version, artifact) {
-  const updater = await readFile(path.join(directory, 'latest-linux.yml'), 'utf8');
-  const values = key => [...updater.matchAll(new RegExp(`^\\s*(?:- )?${key}: ([^\\r\\n]+)$`, 'gm'))].map(match => match[1].trim().replace(/^['"]|['"]$/g, ''));
-  assert.deepEqual(values('version'), [version], 'Updater version must match the artifact.');
-  assert.deepEqual(values('url'), [artifact.name], 'Updater must contain one relative AppImage URL.');
-  assert.deepEqual(values('path'), [artifact.name], 'Updater path must match the artifact.');
-  assert.deepEqual(values('size'), [String(artifact.bytes)], 'Updater size must match the artifact.');
-  const expected = await digest(path.join(directory, artifact.name), 'sha512', 'base64');
-  assert.deepEqual(values('sha512'), [expected, expected], 'Both updater digests must match the artifact.');
+// Accept the simple scalar/list shape emitted by electron-builder, not general
+// YAML features such as aliases or duplicate mappings that could change meaning.
+function parseUpdater(text) {
+  const top = {};
+  const files = [];
+  let current;
+  for (const line of text.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    if (line === 'files:') {
+      assert(!Object.hasOwn(top, 'files'), 'Duplicate updater files list.');
+      top.files = true;
+      current = null;
+      continue;
+    }
+    const item = /^  - url: (.+)$/.exec(line);
+    if (item) {
+      assert(Object.hasOwn(top, 'files') && current !== undefined, 'Updater file outside files list.');
+      current = {};
+      files.push(current);
+      current.url = item[1].replace(/^['"]|['"]$/g, '');
+      continue;
+    }
+    const field = /^(    )?([A-Za-z0-9]+): (.+)$/.exec(line);
+    assert(field, `Unsupported updater metadata line: ${line}`);
+    const [,, key, raw] = field;
+    const target = field[1] ? current : top;
+    assert(target, 'Updater field outside a file entry.');
+    assert((target === top ? ['version', 'path', 'sha512', 'releaseDate'] : ['sha512', 'size', 'blockMapSize']).includes(key), `Unexpected updater field: ${key}`);
+    assert(!Object.hasOwn(target, key), `Duplicate updater field: ${key}`);
+    target[key] = raw.replace(/^['"]|['"]$/g, '');
+    if (target === top) current = undefined;
+  }
+  assert(top.files && files.length > 0, 'Updater files list is missing.');
+  return { ...top, files };
+}
+
+export async function validateUpdater(directory, version, artifact, debian) {
+  const updater = parseUpdater(await readFile(path.join(directory, 'latest-linux.yml'), 'utf8'));
+  assert.equal(updater.version, version, 'Updater version must match the artifact.');
+  const versionNumbers = version.split(/[.-]/).slice(0, 3).map(Number);
+  const sharedFeed = versionNumbers[0] > 0 || versionNumbers[1] > 3 || (versionNumbers[1] === 3 && versionNumbers[2] >= 13);
+  // Preserve validation of previously published/carry-forward packages. From
+  // 0.3.13 onward a shipped .deb must also be available to its in-app updater.
+  const required = [artifact, ...(debian && sharedFeed ? [debian] : [])];
+  assert.deepEqual(updater.files.map(file => file.url).sort(), required.map(file => file.name).sort(), 'Updater must list each accepted package exactly once.');
+  const expectedHashes = new Map();
+  for (const accepted of required) {
+    const file = updater.files.find(entry => entry.url === accepted.name);
+    assert.equal(file.size, String(accepted.bytes), `Updater size must match ${accepted.name}.`);
+    const hash = await digest(path.join(directory, accepted.name), 'sha512', 'base64');
+    expectedHashes.set(accepted.name, hash);
+    assert.equal(file.sha512, hash, `Updater digest must match ${accepted.name}.`);
+  }
+  assert.equal(updater.path, artifact.name, 'Legacy updater path must remain the AppImage.');
+  assert.equal(updater.sha512, expectedHashes.get(artifact.name), 'Legacy updater digest must match the AppImage.');
 }
 
 export async function prepareLinuxRelease({ directory, version, commit, keyHome, fingerprint, evidencePath }) {
@@ -67,11 +113,11 @@ export async function prepareLinuxRelease({ directory, version, commit, keyHome,
   }
   artifacts.sort((a, b) => a.name.localeCompare(b.name));
   const artifact = artifacts.find(file => file.name.endsWith('.AppImage'));
-  await validateUpdater(directory, version, artifact);
+  const debian = artifacts.find(file => file.name === debianName);
+  await validateUpdater(directory, version, artifact, debian);
   const evidence = JSON.parse(await readFile(evidencePath, 'utf8'));
   assert.equal(evidence.artifactSha256, artifact.sha256, 'Acceptance must describe these exact bytes.');
   for (const check of requiredChecks) assert.equal(evidence.checks?.[check], 'passed', `Missing acceptance: ${check}`);
-  const debian = artifacts.find(file => file.name === debianName);
   if (debian) validateDebian(directory, version, debian, evidence);
   const manifest = { schema_version: 1, candidate_version: version, source: { repository: 'mafazsyed/kolvra-app', commit }, target: { platform: 'linux', architecture: 'x64', signing: 'openpgp-detached', signing_fingerprint: fingerprint }, build_environment: 'local', update_feed: 'github:Kausora-Technologies/kolvra-releases', artifacts };
   await writeFile(path.join(directory, manifestName), JSON.stringify(manifest, null, 2) + '\n');
@@ -127,7 +173,7 @@ export async function validateLinuxRelease({ directory, fingerprint, trustedPubl
       assert.equal(artifact.bytes, (await lstat(path.join(directory, artifact.name))).size);
     }
     const artifact = manifest.artifacts.find(item => item.name === artifactName);
-    await validateUpdater(directory, manifest.candidate_version, artifact);
+    await validateUpdater(directory, manifest.candidate_version, artifact, debian);
     verify(artifactName + '.asc', artifactName);
     const evidence = JSON.parse(await readFile(path.join(directory, evidenceName), 'utf8'));
     assert.equal(evidence.artifactSha256, artifact.sha256);

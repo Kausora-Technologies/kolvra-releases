@@ -69,8 +69,11 @@ For a Debian package, also record `debian.artifactSha256` and
 `upgrade`, `uninstall`, and `persistence`. Each must be `passed` after testing.
 Use a private lower-version package for the first Debian upgrade test and label
 that baseline clearly. Test dependency resolution on both Ubuntu and Debian.
-The `.deb` uses manual package upgrades; AppImage remains the in-app-update path.
-`latest-linux.yml` must list only the AppImage.
+From 0.3.13, official `.deb` packages also support in-app updates through the
+system package installer, which may request administrator authentication.
+`latest-linux.yml` must list both packages with their own sizes and SHA-512
+digests. Keep the legacy top-level `path` and `sha512` pointing to the AppImage.
+The validator still accepts older published AppImage-only feeds for carry-forward.
 
 Run representative distributions in local KVM virtual machines using verified
 official images. Record the image checksums, guest versions, memory, display
