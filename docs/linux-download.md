@@ -4,11 +4,11 @@ Choose the x64 AppImage for the main Linux download, or the `.deb` package for
 convenient Ubuntu / Debian installation. Download from the official
 [Kolvra releases](https://github.com/Kausora-Technologies/kolvra-releases/releases).
 Allow the downloaded file to execute as a program in its file properties, then
-open it. The equivalent terminal commands for version 0.3.11 are:
+open it. The equivalent terminal commands for version 0.3.13 are:
 
 ```sh
-chmod +x Kolvra-0.3.11-x86_64.AppImage
-./Kolvra-0.3.11-x86_64.AppImage
+chmod +x Kolvra-0.3.13-x86_64.AppImage
+./Kolvra-0.3.13-x86_64.AppImage
 ```
 
 Keep the AppImage in a writable, permanent folder so in-app updates can replace
@@ -39,12 +39,13 @@ through [Kolvra support](https://kolvra.com/support/).
 Open the `.deb` in your system's software installer, or run:
 
 ```sh
-sudo apt install ./Kolvra-0.3.11-amd64.deb
+sudo apt install ./Kolvra-0.3.13-amd64.deb
 ```
 
-Then open Kolvra from the application menu. Install a newer `.deb` the same way
-to update; this package does not use the AppImage's in-app updater. The package
-manager installs required system libraries. Removing the package leaves your
+Then open Kolvra from the application menu. From 0.3.13, in-app updates download
+the new Debian package and open the system installer, which may ask for
+administrator authentication. You can also install a newer `.deb` using the
+command above. The package manager installs required system libraries. Removing the package leaves your
 conversations, settings, and models in your home directory.
 
 Linux downloads are for x64 Intel / AMD computers. ARM computers need a separate
@@ -66,11 +67,11 @@ Check it before importing the key:
 ```sh
 gpg --show-keys --with-fingerprint kolvra-linux-signing-key.asc
 gpg --import kolvra-linux-signing-key.asc
-gpg --verify Kolvra-0.3.11-x86_64.AppImage.asc Kolvra-0.3.11-x86_64.AppImage
+gpg --verify Kolvra-0.3.13-x86_64.AppImage.asc Kolvra-0.3.13-x86_64.AppImage
 ```
 
-For the Debian package, substitute `Kolvra-0.3.11-amd64.deb.asc` and
-`Kolvra-0.3.11-amd64.deb` in the verification command.
+For the Debian package, substitute `Kolvra-0.3.13-amd64.deb.asc` and
+`Kolvra-0.3.13-amd64.deb` in the verification command.
 
 Require a good signature from that exact fingerprint. GPG may also say the key
 has no personal trust certification; the fingerprint comparison above is how

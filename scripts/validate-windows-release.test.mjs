@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -65,6 +65,16 @@ test("rejects a candidate built for a local updater", async () => {
     }),
     /public Kolvra update feed/,
   );
+});
+
+test("accepts checksums written with Windows CRLF line endings", async () => {
+  const directory = await fixture();
+  const checksums = path.join(directory, "SHA256SUMS");
+  await writeFile(checksums, (await readFile(checksums, "utf8")).replaceAll("\n", "\r\n"));
+  const result = await validateWindowsRelease({
+    directory, version, sourceRepository, sourceCommit, releaseRepository,
+  });
+  assert.equal(result.installer, `Kolvra-${version}-x64.exe`);
 });
 
 test("rejects an artifact changed after the candidate manifest was created", async () => {

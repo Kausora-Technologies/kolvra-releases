@@ -16,7 +16,7 @@ async function digest(file) {
 
 function parseChecksums(text) {
   const entries = new Map();
-  for (const line of text.trim().split("\n")) {
+  for (const line of text.trim().split(/\r?\n/)) {
     const match = /^([a-f0-9]{64})  ([^/\\]+)$/.exec(line);
     invariant(match, `Invalid SHA256SUMS entry: ${line}`);
     invariant(!entries.has(match[2]), `Duplicate SHA256SUMS entry: ${match[2]}`);
