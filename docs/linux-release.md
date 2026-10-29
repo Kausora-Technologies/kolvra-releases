@@ -1,8 +1,22 @@
 # Local Linux releases
 
-Build, test, sign, and upload on a Linux desktop. None of these steps dispatches
-GitHub Actions. Keep the build checkout and acceptance profiles separate from
+Build, test, sign, and upload on a Linux desktop. The access preflight below is a
+separate read-only Actions check. Keep the build checkout and acceptance profiles separate from
 real Kolvra data. Build x64 on x64; qualify other architectures separately.
+
+## Before building
+
+```sh
+gh workflow run release-access-preflight.yml --repo Kausora-Technologies/kolvra-releases --ref main
+```
+
+Open the new **Release access preflight** run in Actions and approve its
+`production-release` environment request if required. Wait for that exact run
+to succeed (`gh run watch RUN_ID --repo Kausora-Technologies/kolvra-releases --exit-status`)
+before candidate builds, and retain its URL. It checks the publication token's
+private repository, Contents-read and Actions-read access without building or
+publishing. Secret presence is not proof of validity. Resolve any access failure
+and repeat this check before spending time on builds.
 
 ## Build
 
@@ -25,6 +39,27 @@ Commit the source change before packaging so the embedded commit matches the
 release manifest. Retain build and verification logs outside the repository.
 Run the appropriate local checks; unit tests should not inherit production
 public configuration when their fixtures supply their own configuration.
+
+Retain the stage from `--keep-stage`, build logs and receipts outside the
+repository, including source commit, version, public configuration, dependency
+inputs, native hashes and artifact hashes. Use `--skip-build` only when the
+existing compiled outputs match all those inputs; it skips compilation, not
+staging or packaging. Run focused tests for the changed paths. Record any
+authorized acceptance reuse with its baseline hashes, scope and limits, without
+describing inherited checks as freshly executed.
+
+As soon as an unpacked payload exists, run the private app repository's smoke
+through its actual Electron executable, before further interactive acceptance:
+
+```sh
+ELECTRON_RUN_AS_NODE=1 /absolute/linux-unpacked/kolvra \
+  scripts/verify-bundled-documents.mjs \
+  /absolute/linux-unpacked/resources/app.asar.unpacked/apps/server/dist/bin.mjs
+```
+
+Retain the PDF/DOCX result with the payload hashes. This smoke does not cover
+scanned-PDF OCR; record that affected-runtime check separately when document or
+OCR dependencies change. It does not replace installed-package acceptance.
 
 ## Accept the exact artifact
 
@@ -118,6 +153,10 @@ assets, then publish it. A maintainer-authorized first Linux release may append
 new Linux-only assets to an existing stable version without changing Windows
 bytes. Record the exact Linux source commit separately in the release notes.
 
+If access, publication or evidence/metadata validation fails, preserve the
+accepted packages and receipts, repair that phase and revalidate the same bytes.
+Rebuild only when the payload or its build inputs need to change.
+
 Upload the AppImage and Debian package, their `.asc` signatures, `latest-linux.yml`, `candidate-linux-x64.json`,
 `acceptance-linux-x64.json`, public key, `SHA256SUMS-linux-x64`, and its `.asc`.
 Do not upload builder debug logs or private profiles. Download those exact assets
@@ -125,8 +164,8 @@ into a fresh directory and run the validator again. Check update discovery
 against the public feed and verify the website's versioned download link.
 
 For website pushes that normally trigger Actions, include `[skip ci]` in the
-commit message. Verify locally first. Do not invoke any workflow or create a PR
-as part of this path.
+commit message. Verify locally first. Apart from the access preflight above, do
+not invoke a build or publication workflow or create a PR as part of this path.
 
 Every future stable release must preserve a usable `latest-linux.yml` and its
 referenced artifact alongside Windows update metadata. A later Windows-only

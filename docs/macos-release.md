@@ -4,8 +4,22 @@ Build on a Mac using the private app repository's pinned dependencies, Xcode
 command-line tools, and a clean accepted source commit. Record the source commit
 and version for each platform. When only macOS advances, preserve the previously
 released Windows and Linux files and updater manifests unchanged. Keep credentials
-and acceptance profiles outside every repository. This procedure does not use
-GitHub Actions.
+and acceptance profiles outside every repository. Build, sign and upload locally;
+the access preflight below is a separate read-only Actions check.
+
+## Before building
+
+```sh
+gh workflow run release-access-preflight.yml --repo Kausora-Technologies/kolvra-releases --ref main
+```
+
+Open the new **Release access preflight** run in Actions and approve its
+`production-release` environment request if required. Wait for that exact run
+to succeed (`gh run watch RUN_ID --repo Kausora-Technologies/kolvra-releases --exit-status`)
+before candidate builds, and retain its URL. It checks the publication token's
+private repository, Contents-read and Actions-read access without building or
+publishing. Secret presence is not proof of validity. Resolve any access failure
+and repeat this check before spending time on builds.
 
 ## Signing setup
 
@@ -41,8 +55,8 @@ architecture manifests cannot overwrite each other:
 
 ```sh
 vp exec node scripts/update-release-package-versions.ts VERSION
-vp run dist:desktop:dmg:arm64 --signed --build-version VERSION --output-dir /absolute/mac-arm64
-vp run dist:desktop:dmg:x64 --signed --build-version VERSION --output-dir /absolute/mac-x64
+vp run dist:desktop:dmg:arm64 --signed --build-version VERSION --output-dir /absolute/mac-arm64 --keep-stage
+vp run dist:desktop:dmg:x64 --signed --build-version VERSION --output-dir /absolute/mac-x64 --keep-stage
 ```
 
 These commands emit DMG installers and ZIP updater packages with publishing
@@ -51,6 +65,27 @@ successful submission evidence. An unsigned internal build is not publishable.
 Restore the saved package manifests after the build; do not commit the temporary
 version edits. Confirm that Settings, the backend, and the native app all report
 the intended release version.
+
+Retain each stage, build log and receipt outside the repository, including
+source commit, version, public configuration, dependency inputs, native hashes,
+artifact hashes and signing/notarization results. Use `--skip-build` only when
+the existing compiled outputs match all those inputs; it skips compilation, not
+staging or packaging. Run focused tests for changed paths. Record any authorized
+acceptance reuse with its baseline hashes, scope and limits, without describing
+inherited checks as freshly executed.
+
+As soon as the unpacked app exists, run the private app repository's PDF/DOCX
+smoke through its actual Electron executable, before further interactive acceptance:
+
+```sh
+ELECTRON_RUN_AS_NODE=1 "/absolute/Kolvra.app/Contents/MacOS/Kolvra" \
+  scripts/verify-bundled-documents.mjs \
+  "/absolute/Kolvra.app/Contents/Resources/app.asar.unpacked/apps/server/dist/bin.mjs"
+```
+
+Retain the result with the payload hashes. This smoke does not cover scanned-PDF
+OCR; record that affected-runtime check separately when document or OCR
+dependencies change. It does not replace installation or signed-app acceptance.
 
 Mount each DMG and separately extract its ZIP. Verify the app from both:
 
@@ -68,6 +103,24 @@ Google sign-in and browser return, quit/relaunch, retained data, and permissions
 If Computer Use is offered, verify the bundled Cua Driver and actual capture and
 control under Kolvra's permissions. Test offline launch with the notarization
 ticket present. Record the tested macOS versions and hardware accurately.
+
+If a read-only DMG attach fails once, retain the failure and stop repeated attach
+attempts. Use these offline checks on disposable extraction paths:
+
+- Verify the original DMG hash and complete archive integrity/CRC with a verified
+  archive reader; retain the tool version and result.
+- Extract faithfully, retaining the archive's original signing metadata. If the
+  reader requires metadata restoration, use the archive's own metadata; do not
+  re-sign the extracted app. Record an unresolved check if faithful extraction
+  cannot be established.
+- Compare the complete app payload with the accepted matching ZIP, including
+  regular-file hashes, file types, executable bits and symlink targets, then run the signature and
+  stapled-ticket checks above on the faithfully extracted app. Retain the ZIP's
+  separate Gatekeeper result.
+
+Record this as offline integrity, payload parity and signature/ticket evidence.
+Mounted-DMG installation acceptance remains a separate unperformed check until
+an actual mount and installation succeed on a supported test machine.
 
 For the first signed Mac release, use a private lower-version build signed with
 the same identity to test update download, install/restart, data retention, and
@@ -93,6 +146,10 @@ version, public updater feed, signing status and final artifact hashes. Rename
 the per-directory checksum files to unique architecture-specific names when
 collecting them, and generate checksums for the final merged metadata too.
 Keep detailed acceptance logs private; upload only sanitized evidence.
+
+If access, publication or evidence/metadata validation fails, preserve accepted
+artifacts and receipts, repair that phase and revalidate the same bytes. Rebuild
+only when the payload or its build inputs need to change.
 
 Upload accepted assets to one draft GitHub release alongside Windows and Linux
 metadata and all referenced files. Download and verify the uploaded bytes before

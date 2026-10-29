@@ -1,0 +1,39 @@
+name: Release access preflight
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  check-access:
+    name: Check private source read access
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment: production-release
+    steps:
+      - name: Verify configured token access
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.KOLVRA_APP_READ_TOKEN }}
+          GH_HOST: github.com
+          GH_PROMPT_DISABLED: "1"
+        run: |
+          set -euo pipefail
+          if [[ -z "$GH_TOKEN" ]]; then
+            echo "KOLVRA_APP_READ_TOKEN is not configured." >&2
+            exit 1
+          fi
+          if ! gh api --method GET repos/mafazsyed/kolvra-app >/dev/null 2>&1; then
+            echo "Source repository access failed; check the configured token and repository access." >&2
+            exit 1
+          fi
+          if ! gh api --method GET 'repos/mafazsyed/kolvra-app/contents/package.json?ref=main' >/dev/null 2>&1; then
+            echo "Source Contents-read check failed; check the configured token and permissions." >&2
+            exit 1
+          fi
+          if ! gh api --method GET 'repos/mafazsyed/kolvra-app/actions/runs?per_page=1' >/dev/null 2>&1; then
+            echo "Source Actions-read check failed; check the configured token and permissions." >&2
+            exit 1
+          fi
+          echo "Source repository, Contents-read, and Actions-read checks passed." >> "$GITHUB_STEP_SUMMARY"

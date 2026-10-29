@@ -37,12 +37,29 @@ reuse requires a successful ancestor candidate and maintainer authorization
 with the completed checks recorded in the source workflow summary. Signing,
 artifact integrity and protected publication are always required.
 
+Before building each release, run the read-only access preflight:
+
+```sh
+gh workflow run release-access-preflight.yml --repo Kausora-Technologies/kolvra-releases --ref main
+```
+
+Open the new **Release access preflight** run in Actions and approve its
+`production-release` environment request if required. Wait for that run to
+succeed, for example with `gh run watch RUN_ID --repo Kausora-Technologies/kolvra-releases --exit-status`,
+and retain its URL with the release receipts before starting candidate builds.
+The check uses the same environment token as publication to verify private
+repository, Contents-read and Actions-read access. A configured secret alone
+does not establish validity. The workflow performs only GET requests, with no
+checkout, build, signing, upload or publication. A failed access check calls for
+repairing the configured token and rerunning the preflight; existing accepted
+artifacts do not need rebuilding for an access or publication failure.
+
 The signed desktop updater and website download button use the accepted assets
 in this repository. The website links directly to the versioned installer asset,
 whose attachment header starts the download without visiting a GitHub page.
 
 Linux releases can be built, accepted, signed, and published entirely on a local
-desktop, without GitHub Actions. Maintainers should follow
+desktop; the access preflight above is a separate Actions check. Maintainers should follow
 [the local Linux release procedure](docs/linux-release.md). Customers can use
 [the Linux installation and signature guide](docs/linux-download.md).
 
