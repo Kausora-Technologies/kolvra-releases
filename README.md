@@ -70,3 +70,26 @@ supported platforms in one draft before advancing the stable release.
 
 Do not download Kolvra from an unofficial mirror. Security reports should be
 sent privately to [contact@kolvra.com](mailto:contact@kolvra.com).
+
+
+## Locally built Windows candidates
+
+`Stage verified local Windows release` retains the `production-release` approval
+and read-only private-source token. It accepts an exact-source private draft named
+`local-candidate-VERSION-SHA_PREFIX` (the first ten commit characters). The draft
+contains only the signed installer, blockmap, paired WSL archive, `latest.yml`,
+`acceptance-windows-x64.json`, `candidate-win-x64.json` and `SHA256SUMS`.
+
+The workflow verifies the source commit, complete manifest and hashes, public
+updater feed, Microsoft-trusted company signatures and timestamps on the installer,
+extracted app and native runtime, signed WSL archive binding, and actual packaged
+server/native versions on Windows. Acceptance reuse must identify an explicitly
+authorized ancestor baseline. It performs no build, signing or installation and
+never reports reused lifecycle checks as fresh. It creates a draft only; assemble
+and verify macOS and Linux assets before publishing the combined release.
+
+Detailed build and acceptance logs stay private. The public draft includes the
+sanitized acceptance record and the workflow's independent verification receipt.
+A failed check preserves the candidate; repair that phase without rebuilding or
+re-signing already accepted bytes. The Actions-built Windows promotion path above
+remains available unchanged.

@@ -1,0 +1,123 @@
+name: Stage verified local Windows release
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_commit:
+        description: Exact app commit built locally (40-character SHA)
+        required: true
+        type: string
+      version:
+        description: Exact candidate version
+        required: true
+        type: string
+      confirmation:
+        description: Type the exact version again
+        required: true
+        type: string
+
+permissions:
+  actions: none
+  contents: write
+  id-token: none
+
+concurrency:
+  group: windows-public-release
+  cancel-in-progress: false
+
+env:
+  SOURCE_REPOSITORY: mafazsyed/kolvra-app
+  RELEASE_REPOSITORY: Kausora-Technologies/kolvra-releases
+  VERSION: ${{ inputs.version }}
+  SOURCE_COMMIT: ${{ inputs.source_commit }}
+
+jobs:
+  stage:
+    name: Verify exact local bytes and create a public draft
+    runs-on: windows-2025
+    timeout-minutes: 20
+    environment: production-release
+    steps:
+      - name: Checkout release controls
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Validate request and retrieve private staging candidate
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.KOLVRA_APP_READ_TOKEN }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:VERSION -notmatch '^\d+\.\d+\.\d+(-rc\.[1-9]\d*)?$') { throw 'Invalid version' }
+          if ($env:SOURCE_COMMIT -notmatch '^[a-f0-9]{40}$') { throw 'Invalid source SHA' }
+          if ($env:CONFIRMATION -cne $env:VERSION) { throw 'Confirmation differs from version' }
+          if (!$env:GH_TOKEN) { throw 'Private source read token missing' }
+          $commit = gh api "repos/$env:SOURCE_REPOSITORY/commits/$env:SOURCE_COMMIT" --jq .sha
+          if ($LASTEXITCODE -or $commit -cne $env:SOURCE_COMMIT) { throw 'Source commit not verified' }
+          $tag = "local-candidate-$env:VERSION-$($env:SOURCE_COMMIT.Substring(0,10))"
+          $candidate = gh release view $tag --repo $env:SOURCE_REPOSITORY --json targetCommitish,isDraft | ConvertFrom-Json
+          if ($LASTEXITCODE -or !$candidate.isDraft -or $candidate.targetCommitish -cne $env:SOURCE_COMMIT) { throw 'Private transport is not an exact-source draft' }
+          New-Item -ItemType Directory staging | Out-Null
+          gh release download $tag --repo $env:SOURCE_REPOSITORY --dir staging
+          if ($LASTEXITCODE) { throw 'Candidate download failed' }
+          node scripts/validate-windows-release.mjs staging $env:VERSION $env:SOURCE_REPOSITORY $env:SOURCE_COMMIT $env:RELEASE_REPOSITORY
+          if ($LASTEXITCODE) { throw 'Candidate provenance, feed or hash validation failed' }
+          $evidence = Get-Content staging/acceptance-windows-x64.json -Raw | ConvertFrom-Json
+          if ($evidence.sourceCommit -cne $env:SOURCE_COMMIT -or !$evidence.verificationReuse.ownerAuthorized) { throw 'Explicit acceptance reuse evidence required' }
+          $baseline = $evidence.verificationReuse.baselineSource
+          if ($baseline -notmatch '^[a-f0-9]{40}$') { throw 'Invalid acceptance baseline' }
+          $comparison = gh api "repos/$env:SOURCE_REPOSITORY/compare/$baseline...$env:SOURCE_COMMIT" --jq .status
+          if ($LASTEXITCODE -or $comparison -notin @('ahead','identical')) { throw 'Acceptance baseline is not an ancestor' }
+
+      - name: Verify Microsoft signatures, extracted app and paired WSL bytes
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          function Assert-Signature([string]$file) {
+            $signature = Get-AuthenticodeSignature -LiteralPath $file
+            if ($signature.Status -ne 'Valid' -or !$signature.TimeStamperCertificate -or $signature.SignerCertificate.Subject -notmatch 'CN=Kausora Technologies LLC') { throw "Invalid company signature or timestamp: $file" }
+          }
+          $installer = (Resolve-Path "staging/Kolvra-$env:VERSION-x64.exe").Path
+          Assert-Signature $installer
+          $unpack = Join-Path $env:RUNNER_TEMP 'installer-extracted'
+          $app = Join-Path $env:RUNNER_TEMP 'app-extracted'
+          & 7z x $installer "-o$unpack" -y | Out-Null
+          if ($LASTEXITCODE) { throw 'Installer extraction failed' }
+          $payload = Join-Path $unpack '$PLUGINSDIR/app-64.7z'
+          if (!(Test-Path -LiteralPath $payload)) { throw 'Expected signed NSIS payload missing' }
+          & 7z x $payload "-o$app" -y | Out-Null
+          if ($LASTEXITCODE) { throw 'App extraction failed' }
+          $exe = Join-Path $app 'Kolvra.exe'
+          $native = Join-Path $app 'resources/zeroclaw/zeroclaw.exe'
+          Assert-Signature $exe
+          Assert-Signature $native
+          $wsl = Get-Content (Join-Path $app 'resources/wsl-runtime.json') -Raw | ConvertFrom-Json
+          if ($wsl.version -cne $env:VERSION -or $wsl.architecture -cne 'x64' -or $wsl.assetName -cne "Kolvra-$env:VERSION-wsl-x64.tar.gz") { throw 'WSL payload identity differs' }
+          $archive = Get-Item (Join-Path staging $wsl.assetName)
+          if ($archive.Length -ne $wsl.bytes -or (Get-FileHash $archive.FullName -Algorithm SHA256).Hash.ToLowerInvariant() -cne $wsl.sha256) { throw 'WSL archive differs from signed app manifest' }
+          $env:ELECTRON_RUN_AS_NODE = '1'
+          $env:KOLVRA_HOME = Join-Path $env:RUNNER_TEMP 'isolated-version-probe'
+          $version = & $exe (Join-Path $app 'resources/server.asar/apps/server/dist/bin.mjs') --version
+          if ($LASTEXITCODE -or "$version" -notmatch [regex]::Escape($env:VERSION)) { throw 'Final signed Electron server version failed' }
+          Remove-Item Env:ELECTRON_RUN_AS_NODE
+          $nativeVersion = & $native --version
+          if ($LASTEXITCODE -or "$nativeVersion" -notmatch 'kolvra-native2-ffc2f4f3cae5693a') { throw 'Native identity differs' }
+          $proof = [ordered]@{ sourceCommit=$env:SOURCE_COMMIT; version=$env:VERSION; workflowRun=$env:GITHUB_RUN_ID; installerSha256=(Get-FileHash $installer -Algorithm SHA256).Hash.ToLowerInvariant(); appSha256=(Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant(); signatures='Valid company signatures and Microsoft timestamps'; pairedWsl='verified'; packagedServerVersion='passed'; nativeIdentity='passed'; acceptance='Owner-authorized baseline reuse recorded in acceptance-windows-x64.json; installation lifecycle was not repeated here' }
+          $proof | ConvertTo-Json | Set-Content verified-windows-local.json -Encoding utf8
+          "Verified local source $env:SOURCE_COMMIT, signatures, exact payload, WSL archive, versions and all declared hashes. No compilation, signing or installation performed." >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Stage verified public draft
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = "v$env:VERSION"
+          gh release view $tag --repo $env:RELEASE_REPOSITORY 2>$null
+          if ($LASTEXITCODE -eq 0) { throw 'Release exists; preserve immutable assets and resume its failed phase explicitly' }
+          $notes = Join-Path $env:RUNNER_TEMP 'release-notes.txt'
+          "Signed Windows candidate verified by protected workflow $env:GITHUB_RUN_ID. Draft awaits the remaining platforms. App source $env:SOURCE_COMMIT; acceptance reuse is recorded explicitly." | Set-Content $notes
+          $assets = @(Get-ChildItem staging -File | ForEach-Object FullName)
+          $assets += (Resolve-Path verified-windows-local.json).Path
+          gh release create $tag @assets --repo $env:RELEASE_REPOSITORY --target $env:GITHUB_SHA --title "Kolvra $env:VERSION" --notes-file $notes --draft
+          if ($LASTEXITCODE) { throw 'Draft staging failed; retain these verified bytes' }
