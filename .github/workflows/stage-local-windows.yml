@@ -62,6 +62,9 @@ jobs:
           if ($LASTEXITCODE) { throw 'Candidate download failed' }
           node scripts/validate-windows-release.mjs staging $env:VERSION $env:SOURCE_REPOSITORY $env:SOURCE_COMMIT $env:RELEASE_REPOSITORY
           if ($LASTEXITCODE) { throw 'Candidate provenance, feed or hash validation failed' }
+          $helper = gh api "repos/$env:SOURCE_REPOSITORY/contents/scripts/verify-bundled-documents.mjs?ref=$env:SOURCE_COMMIT" --jq .content
+          if ($LASTEXITCODE) { throw 'Exact-source document probe unavailable' }
+          [IO.File]::WriteAllBytes((Join-Path $env:RUNNER_TEMP 'verify-bundled-documents.mjs'), [Convert]::FromBase64String(($helper -join "")))
           $evidence = Get-Content staging/acceptance-windows-x64.json -Raw | ConvertFrom-Json
           if ($evidence.sourceCommit -cne $env:SOURCE_COMMIT -or !$evidence.verificationReuse.ownerAuthorized) { throw 'Explicit acceptance reuse evidence required' }
           $baseline = $evidence.verificationReuse.baselineSource
@@ -99,10 +102,12 @@ jobs:
           $env:KOLVRA_HOME = Join-Path $env:RUNNER_TEMP 'isolated-version-probe'
           $version = & $exe (Join-Path $app 'resources/server.asar/apps/server/dist/bin.mjs') --version
           if ($LASTEXITCODE -or "$version" -notmatch [regex]::Escape($env:VERSION)) { throw 'Final signed Electron server version failed' }
+          & $exe (Join-Path $env:RUNNER_TEMP 'verify-bundled-documents.mjs') (Join-Path $app 'resources/server.asar/apps/server/dist/bin.mjs')
+          if ($LASTEXITCODE) { throw 'Final signed Electron PDF/DOCX worker failed' }
           Remove-Item Env:ELECTRON_RUN_AS_NODE
           $nativeVersion = & $native --version
           if ($LASTEXITCODE -or "$nativeVersion" -notmatch 'kolvra-native2-ffc2f4f3cae5693a') { throw 'Native identity differs' }
-          $proof = [ordered]@{ sourceCommit=$env:SOURCE_COMMIT; version=$env:VERSION; workflowRun=$env:GITHUB_RUN_ID; installerSha256=(Get-FileHash $installer -Algorithm SHA256).Hash.ToLowerInvariant(); appSha256=(Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant(); signatures='Valid company signatures and Microsoft timestamps'; pairedWsl='verified'; packagedServerVersion='passed'; nativeIdentity='passed'; acceptance='Owner-authorized baseline reuse recorded in acceptance-windows-x64.json; installation lifecycle was not repeated here' }
+          $proof = [ordered]@{ sourceCommit=$env:SOURCE_COMMIT; version=$env:VERSION; workflowRun=$env:GITHUB_RUN_ID; installerSha256=(Get-FileHash $installer -Algorithm SHA256).Hash.ToLowerInvariant(); appSha256=(Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant(); signatures='Valid company signatures and Microsoft timestamps'; pairedWsl='verified'; packagedServerVersion='passed'; packagedDocuments='passed'; nativeIdentity='passed'; acceptance='Owner-authorized baseline reuse recorded in acceptance-windows-x64.json; installation lifecycle was not repeated here' }
           $proof | ConvertTo-Json | Set-Content verified-windows-local.json -Encoding utf8
           "Verified local source $env:SOURCE_COMMIT, signatures, exact payload, WSL archive, versions and all declared hashes. No compilation, signing or installation performed." >> $env:GITHUB_STEP_SUMMARY
 
