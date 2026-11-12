@@ -75,8 +75,9 @@ sent privately to [contact@kolvra.com](mailto:contact@kolvra.com).
 ## Locally built Windows candidates
 
 `Stage verified local Windows release` retains the `production-release` approval
-and read-only private-source token. It accepts an exact-source private draft named
-`local-candidate-VERSION-SHA_PREFIX` (the first ten commit characters). The draft
+and read-only private-source token. It accepts an exact-source prerelease in the
+private source repository named `local-candidate-VERSION-SHA_PREFIX` (the first ten
+commit characters). Read-only tokens cannot retrieve private drafts. The transport
 contains only the signed installer, blockmap, paired WSL archive, `latest.yml`,
 `acceptance-windows-x64.json`, `candidate-win-x64.json` and `SHA256SUMS`.
 
