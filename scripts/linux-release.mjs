@@ -20,13 +20,17 @@ const requiredChecks = ['packagedStartup', 'assistantGateway', 'terminal', 'loca
 export function validateAcceptanceCheck(evidence, check, scope = 'appimage') {
   const status = scope === 'debian' ? evidence.debian?.checks?.[check] : evidence.checks?.[check];
   if (status === 'passed') return;
-  assert.equal(status, 'inherited', `Missing acceptance: ${check}`);
+  assert(['inherited', 'not-repeated'].includes(status), `Missing acceptance: ${check}`);
   const reuse = evidence.verificationReuse;
   assert.equal(reuse?.ownerAuthorized, true, 'Acceptance reuse requires explicit owner authorization.');
   assert.match(reuse.baselineSource ?? '', /^[a-f0-9]{40}$/, 'Reuse baseline source is required.');
   assert.match(reuse.baselineEvidenceSha256 ?? '', /^[a-f0-9]{64}$/, 'Reuse baseline evidence hash is required.');
   assert.match(reuse.baselineArtifactSha256 ?? '', /^[a-f0-9]{64}$/, 'Reuse baseline artifact hash is required.');
   assert.equal(evidence.freshChecks?.packagedRuntime, 'passed', 'Exact packaged runtime cannot be inherited.');
+  if (status === 'not-repeated') {
+    assert.equal(typeof reuse.notRepeatedChecks?.[`${scope}.${check}`], 'string', 'Unperformed coverage needs a specific qualification.');
+    assert(reuse.notRepeatedChecks[`${scope}.${check}`].trim().length >= 20, 'Unperformed coverage needs a specific qualification.');
+  }
 }
 
 export async function digest(file, algorithm = 'sha256', encoding = 'hex') {

@@ -55,8 +55,8 @@ jobs:
           $commit = gh api "repos/$env:SOURCE_REPOSITORY/commits/$env:SOURCE_COMMIT" --jq .sha
           if ($LASTEXITCODE -or $commit -cne $env:SOURCE_COMMIT) { throw 'Source commit not verified' }
           $tag = "local-candidate-$env:VERSION-$($env:SOURCE_COMMIT.Substring(0,10))"
-          $candidate = gh release view $tag --repo $env:SOURCE_REPOSITORY --json targetCommitish,isDraft | ConvertFrom-Json
-          if ($LASTEXITCODE -or !$candidate.isDraft -or $candidate.targetCommitish -cne $env:SOURCE_COMMIT) { throw 'Private transport is not an exact-source draft' }
+          $candidate = gh release view $tag --repo $env:SOURCE_REPOSITORY --json targetCommitish,isDraft,isPrerelease | ConvertFrom-Json
+          if ($LASTEXITCODE -or $candidate.isDraft -or !$candidate.isPrerelease -or $candidate.targetCommitish -cne $env:SOURCE_COMMIT) { throw 'Private transport is not an exact-source prerelease' }
           New-Item -ItemType Directory staging | Out-Null
           gh release download $tag --repo $env:SOURCE_REPOSITORY --dir staging
           if ($LASTEXITCODE) { throw 'Candidate download failed' }

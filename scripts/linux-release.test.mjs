@@ -130,4 +130,7 @@ test('acceptance reuse is explicit and cannot replace exact-byte runtime verific
   assert.throws(() => validateAcceptanceCheck({ ...evidence, freshChecks: { packagedRuntime: 'inherited' } }, 'updater'), /cannot be inherited/);
   assert.throws(() => validateAcceptanceCheck({ checks: { updater: 'skipped' } }, 'updater'), /Missing acceptance/);
   assert.doesNotThrow(() => validateAcceptanceCheck({ checks: { updater: 'passed' } }, 'updater'));
+  const qualified = { ...evidence, checks: { updater: 'not-repeated' } };
+  assert.throws(() => validateAcceptanceCheck(qualified, 'updater'), /specific qualification/);
+  assert.doesNotThrow(() => validateAcceptanceCheck({ ...qualified, verificationReuse: { ...evidence.verificationReuse, notRepeatedChecks: { 'appimage.updater': 'Automatic installation was not qualified in the baseline; fresh metadata and hash verification passed.' } } }, 'updater'));
 });

@@ -182,6 +182,11 @@ referenced artifact alongside Windows update metadata. A later Windows-only
 release without Linux metadata can strand Linux update discovery at the latest
 GitHub release; coordinate platform publication before advancing that release.
 
+When the owner authorizes publication using previous QA, any check that was
+unperformed in that baseline must use `not-repeated` and a specific qualification
+in `verificationReuse.notRepeatedChecks` keyed by `appimage.CHECK` or
+`debian.CHECK`. It must never be described as passed or inherited coverage.
+
 If only one platform changes version, carry the other platform's existing
 artifacts and update metadata into the new stable release unchanged. Keep their
 original filenames and versions and explain this in the release notes. The
