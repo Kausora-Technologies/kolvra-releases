@@ -99,6 +99,16 @@ the corresponding behavior:
 }
 ```
 
+For explicitly authorized lifecycle acceptance reuse, record those statuses as
+`inherited` rather than claiming fresh tests of the new bytes. Include
+`verificationReuse.ownerAuthorized=true`, a 40-character `baselineSource`, and
+64-character `baselineArtifactSha256` and `baselineEvidenceSha256` values. Keep
+`freshChecks.packagedRuntime=passed` only after the final extracted package's
+Electron/runtime checks pass. The same rule applies to inherited Debian lifecycle
+checks. Hashes, updater integrity, Debian package identity and all signatures are
+still verified against the exact new artifacts. The signed evidence preserves the
+fresh/inherited distinction.
+
 For a Debian package, also record `debian.artifactSha256` and
 `debian.checks` with `installation`, `startup`, `terminal`, `localInference`,
 `upgrade`, `uninstall`, and `persistence`. Each must be `passed` after testing.

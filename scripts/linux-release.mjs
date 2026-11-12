@@ -14,6 +14,21 @@ const publicKeyName = 'kolvra-linux-signing-key.asc';
 const trustedKey = fileURLToPath(new URL('../keys/kolvra-linux-signing-key.asc', import.meta.url));
 const requiredChecks = ['packagedStartup', 'assistantGateway', 'terminal', 'localInference', 'restartPersistence', 'updater'];
 
+/** Lifecycle acceptance can be reused only when the operator records explicit
+ * authorization and a content-addressed baseline. Exact package runtime and all
+ * updater, artifact hash and signature checks remain fresh. */
+export function validateAcceptanceCheck(evidence, check, scope = 'appimage') {
+  const status = scope === 'debian' ? evidence.debian?.checks?.[check] : evidence.checks?.[check];
+  if (status === 'passed') return;
+  assert.equal(status, 'inherited', `Missing acceptance: ${check}`);
+  const reuse = evidence.verificationReuse;
+  assert.equal(reuse?.ownerAuthorized, true, 'Acceptance reuse requires explicit owner authorization.');
+  assert.match(reuse.baselineSource ?? '', /^[a-f0-9]{40}$/, 'Reuse baseline source is required.');
+  assert.match(reuse.baselineEvidenceSha256 ?? '', /^[a-f0-9]{64}$/, 'Reuse baseline evidence hash is required.');
+  assert.match(reuse.baselineArtifactSha256 ?? '', /^[a-f0-9]{64}$/, 'Reuse baseline artifact hash is required.');
+  assert.equal(evidence.freshChecks?.packagedRuntime, 'passed', 'Exact packaged runtime cannot be inherited.');
+}
+
 export async function digest(file, algorithm = 'sha256', encoding = 'hex') {
   const hash = createHash(algorithm);
   for await (const chunk of createReadStream(file)) hash.update(chunk);
@@ -38,7 +53,7 @@ function validateDebian(directory, version, artifact, evidence) {
   assert.equal(field('Architecture'), 'amd64', 'Debian architecture must be amd64.');
   assert.equal(evidence.debian?.artifactSha256, artifact.sha256, 'Debian acceptance must describe these exact bytes.');
   for (const check of ['installation', 'startup', 'terminal', 'localInference', 'upgrade', 'uninstall', 'persistence']) {
-    assert.equal(evidence.debian.checks?.[check], 'passed', `Missing Debian acceptance: ${check}`);
+    validateAcceptanceCheck(evidence, check, 'debian');
   }
 }
 
@@ -117,7 +132,7 @@ export async function prepareLinuxRelease({ directory, version, commit, keyHome,
   await validateUpdater(directory, version, artifact, debian);
   const evidence = JSON.parse(await readFile(evidencePath, 'utf8'));
   assert.equal(evidence.artifactSha256, artifact.sha256, 'Acceptance must describe these exact bytes.');
-  for (const check of requiredChecks) assert.equal(evidence.checks?.[check], 'passed', `Missing acceptance: ${check}`);
+  for (const check of requiredChecks) validateAcceptanceCheck(evidence, check);
   if (debian) validateDebian(directory, version, debian, evidence);
   const manifest = { schema_version: 1, candidate_version: version, source: { repository: 'mafazsyed/kolvra-app', commit }, target: { platform: 'linux', architecture: 'x64', signing: 'openpgp-detached', signing_fingerprint: fingerprint }, build_environment: 'local', update_feed: 'github:Kausora-Technologies/kolvra-releases', artifacts };
   await writeFile(path.join(directory, manifestName), JSON.stringify(manifest, null, 2) + '\n');
@@ -177,7 +192,7 @@ export async function validateLinuxRelease({ directory, fingerprint, trustedPubl
     verify(artifactName + '.asc', artifactName);
     const evidence = JSON.parse(await readFile(path.join(directory, evidenceName), 'utf8'));
     assert.equal(evidence.artifactSha256, artifact.sha256);
-    for (const check of requiredChecks) assert.equal(evidence.checks?.[check], 'passed', `Missing acceptance: ${check}`);
+    for (const check of requiredChecks) validateAcceptanceCheck(evidence, check);
     if (debian) {
       validateDebian(directory, manifest.candidate_version, debian, evidence);
       verify(debianName + '.asc', debianName);

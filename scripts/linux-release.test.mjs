@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
-import { prepareLinuxRelease, validateLinuxRelease, validateUpdater } from './linux-release.mjs';
+import { prepareLinuxRelease, validateLinuxRelease, validateUpdater, validateAcceptanceCheck } from './linux-release.mjs';
 
 test('shared Linux updater validates each package and preserves old feeds', async t => {
   const root = await mkdtemp(path.join(tmpdir(), 'kolvra-linux-feed-test-'));
@@ -116,4 +116,18 @@ for (const withDebian of [false, true]) test(`Linux release ${withDebian ? 'with
     await writeFile(checksum, '0'.repeat(64) + '  ../outside\n');
     await assert.rejects(verify);
   });
+});
+
+
+test('acceptance reuse is explicit and cannot replace exact-byte runtime verification', () => {
+  const evidence = { checks: { updater: 'inherited' }, debian: { checks: { upgrade: 'inherited' } },
+    verificationReuse: { ownerAuthorized: true, baselineSource: 'a'.repeat(40), baselineArtifactSha256: 'b'.repeat(64), baselineEvidenceSha256: 'c'.repeat(64) },
+    freshChecks: { packagedRuntime: 'passed' } };
+  assert.doesNotThrow(() => validateAcceptanceCheck(evidence, 'updater'));
+  assert.doesNotThrow(() => validateAcceptanceCheck(evidence, 'upgrade', 'debian'));
+  assert.throws(() => validateAcceptanceCheck({ ...evidence, verificationReuse: { ...evidence.verificationReuse, ownerAuthorized: false } }, 'updater'), /authorization/);
+  assert.throws(() => validateAcceptanceCheck({ ...evidence, verificationReuse: { ...evidence.verificationReuse, baselineEvidenceSha256: '' } }, 'updater'), /evidence hash/);
+  assert.throws(() => validateAcceptanceCheck({ ...evidence, freshChecks: { packagedRuntime: 'inherited' } }, 'updater'), /cannot be inherited/);
+  assert.throws(() => validateAcceptanceCheck({ checks: { updater: 'skipped' } }, 'updater'), /Missing acceptance/);
+  assert.doesNotThrow(() => validateAcceptanceCheck({ checks: { updater: 'passed' } }, 'updater'));
 });
