@@ -100,10 +100,17 @@ jobs:
           if ($archive.Length -ne $wsl.bytes -or (Get-FileHash $archive.FullName -Algorithm SHA256).Hash.ToLowerInvariant() -cne $wsl.sha256) { throw 'WSL archive differs from signed app manifest' }
           $env:ELECTRON_RUN_AS_NODE = '1'
           $env:KOLVRA_HOME = Join-Path $env:RUNNER_TEMP 'isolated-version-probe'
-          $version = & $exe (Join-Path $app 'resources/server.asar/apps/server/dist/bin.mjs') --version
-          if ($LASTEXITCODE -or "$version" -notmatch [regex]::Escape($env:VERSION)) { throw 'Final signed Electron server version failed' }
-          & $exe (Join-Path $env:RUNNER_TEMP 'verify-bundled-documents.mjs') (Join-Path $app 'resources/server.asar/apps/server/dist/bin.mjs')
-          if ($LASTEXITCODE) { throw 'Final signed Electron PDF/DOCX worker failed' }
+          $entry = Join-Path $app 'resources/server.asar/apps/server/dist/bin.mjs'
+          $stdout = Join-Path $env:RUNNER_TEMP 'version.stdout'
+          $stderr = Join-Path $env:RUNNER_TEMP 'version.stderr'
+          $probe = Start-Process -FilePath $exe -ArgumentList @(('"' + $entry + '"'),'--version') -Wait -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+          $version = Get-Content $stdout -Raw
+          if ($probe.ExitCode -ne 0 -or "$version" -notmatch [regex]::Escape($env:VERSION)) { Get-Content $stderr; throw 'Final signed Electron server version failed' }
+          $stdout = Join-Path $env:RUNNER_TEMP 'documents.stdout'
+          $stderr = Join-Path $env:RUNNER_TEMP 'documents.stderr'
+          $helper = Join-Path $env:RUNNER_TEMP 'verify-bundled-documents.mjs'
+          $probe = Start-Process -FilePath $exe -ArgumentList @(('"' + $helper + '"'),('"' + $entry + '"')) -Wait -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+          if ($probe.ExitCode -ne 0) { Get-Content $stderr; throw 'Final signed Electron PDF/DOCX worker failed' }
           Remove-Item Env:ELECTRON_RUN_AS_NODE
           $nativeVersion = & $native --version
           if ($LASTEXITCODE -or "$nativeVersion" -notmatch 'kolvra-native2-ffc2f4f3cae5693a') { throw 'Native identity differs' }
