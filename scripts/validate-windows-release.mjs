@@ -5,6 +5,10 @@ import { pathToFileURL } from "node:url";
 
 const VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-rc\.[1-9]\d*)?$/;
 const COMMIT_PATTERN = /^[a-f0-9]{40}$/;
+const LOCAL_ACCEPTANCE_NAME = "acceptance-windows-x64.json";
+const FRESH_ACCEPTANCE_CHECKS = [
+  "install", "startup", "update", "retainedData", "recovery", "uninstall",
+];
 
 function invariant(condition, message) {
   if (!condition) throw new Error(message);
@@ -25,12 +29,53 @@ function parseChecksums(text) {
   return entries;
 }
 
+function validateLocalAcceptance(acceptance, { sourceCommit, installerSha256 }) {
+  invariant(acceptance?.sourceCommit === sourceCommit, "Acceptance source commit does not match.");
+  if (Object.hasOwn(acceptance, "verificationReuse")) {
+    const reuse = acceptance.verificationReuse;
+    invariant(reuse?.ownerAuthorized === true, "Acceptance reuse requires explicit owner authorization.");
+    invariant(
+      typeof reuse.baselineSource === "string" &&
+        reuse.baselineSource.length === 40 &&
+        COMMIT_PATTERN.test(reuse.baselineSource),
+      "Invalid acceptance baseline.",
+    );
+    return { mode: "reuse", baselineSource: reuse.baselineSource };
+  }
+
+  invariant(acceptance.artifactSha256 === installerSha256, "Fresh acceptance must match the exact installer.");
+  const checks = acceptance.checks;
+  invariant(checks && typeof checks === "object" && !Array.isArray(checks), "Fresh acceptance checks are missing.");
+  for (const name of FRESH_ACCEPTANCE_CHECKS) {
+    invariant(Object.hasOwn(checks, name), `Missing Windows acceptance check: ${name}.`);
+  }
+  for (const [name, status] of Object.entries(checks)) {
+    invariant(status === "passed", `Windows acceptance check failed: ${name}.`);
+  }
+  return { mode: "fresh" };
+}
+
+function nativeVersionFromSeries(series) {
+  invariant(
+    typeof series?.seriesSha256 === "string" &&
+      series.seriesSha256.length === 64 &&
+      /^[a-f0-9]{64}$/.test(series.seriesSha256) &&
+      series.buildId === `kolvra-native2-${series.seriesSha256.slice(0, 16)}` &&
+      typeof series.version === "string" &&
+      series.version.trim() === series.version &&
+      VERSION_PATTERN.test(series.version),
+    "The exact-source native series has an invalid version or build identity.",
+  );
+  return `zeroclaw ${series.version} (${series.buildId})`;
+}
+
 export async function validateWindowsRelease({
   directory,
   version,
   sourceRepository,
   sourceCommit,
   releaseRepository,
+  localSeriesPath,
 }) {
   invariant(VERSION_PATTERN.test(version), "Version must match X.Y.Z or X.Y.Z-rc.N.");
   invariant(COMMIT_PATTERN.test(sourceCommit), "Source commit must be a lowercase 40-character SHA.");
@@ -96,18 +141,34 @@ export async function validateWindowsRelease({
   invariant(updater.includes(`version: ${version}`), "Updater metadata version does not match.");
   invariant(updater.includes(installer), "Updater metadata does not reference the accepted installer.");
 
-  return { version, sourceRepository, sourceCommit, installer, artifactNames };
+  const candidate = { version, sourceRepository, sourceCommit, installer, artifactNames };
+  if (localSeriesPath === undefined) return candidate;
+
+  invariant(artifactNames.includes(LOCAL_ACCEPTANCE_NAME), "Windows acceptance must be in the candidate manifest.");
+  const evidence = JSON.parse(await readFile(path.join(root, LOCAL_ACCEPTANCE_NAME), "utf8"));
+  const acceptance = validateLocalAcceptance(evidence, {
+    sourceCommit,
+    installerSha256: checksums.get(installer),
+  });
+  const nativeVersion = nativeVersionFromSeries(
+    JSON.parse(await readFile(localSeriesPath, "utf8")),
+  );
+  return { ...candidate, acceptance, nativeVersion };
 }
 
 async function main(argv) {
-  const [directory, version, sourceRepository, sourceCommit, releaseRepository] = argv;
-  invariant(releaseRepository, "Usage: validate-windows-release DIRECTORY VERSION SOURCE_REPOSITORY SOURCE_COMMIT RELEASE_REPOSITORY");
+  const [directory, version, sourceRepository, sourceCommit, releaseRepository, flag, localSeriesPath, ...rest] = argv;
+  invariant(
+    releaseRepository && (flag === undefined || (flag === "--local-acceptance" && localSeriesPath && rest.length === 0)),
+    "Usage: validate-windows-release DIRECTORY VERSION SOURCE_REPOSITORY SOURCE_COMMIT RELEASE_REPOSITORY [--local-acceptance SERIES_FILE]",
+  );
   const result = await validateWindowsRelease({
     directory,
     version,
     sourceRepository,
     sourceCommit,
     releaseRepository,
+    localSeriesPath,
   });
   process.stdout.write(`${JSON.stringify(result)}\n`);
 }

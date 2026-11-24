@@ -60,17 +60,24 @@ jobs:
           New-Item -ItemType Directory staging | Out-Null
           gh release download $tag --repo $env:SOURCE_REPOSITORY --dir staging
           if ($LASTEXITCODE) { throw 'Candidate download failed' }
-          node scripts/validate-windows-release.mjs staging $env:VERSION $env:SOURCE_REPOSITORY $env:SOURCE_COMMIT $env:RELEASE_REPOSITORY
+          $series = gh api "repos/$env:SOURCE_REPOSITORY/contents/patches/zeroclaw-0.8.6/series.json?ref=$env:SOURCE_COMMIT" --jq .content
+          if ($LASTEXITCODE) { throw 'Exact-source native series unavailable' }
+          $seriesPath = Join-Path $env:RUNNER_TEMP 'zeroclaw-series.json'
+          [IO.File]::WriteAllBytes($seriesPath, [Convert]::FromBase64String(($series -join "")))
+          $validation = node scripts/validate-windows-release.mjs staging $env:VERSION $env:SOURCE_REPOSITORY $env:SOURCE_COMMIT $env:RELEASE_REPOSITORY --local-acceptance $seriesPath
           if ($LASTEXITCODE) { throw 'Candidate provenance, feed or hash validation failed' }
+          $validated = $validation | ConvertFrom-Json
+          if ($validated.acceptance.mode -ceq 'reuse') {
+            $baseline = $validated.acceptance.baselineSource
+            $comparison = gh api "repos/$env:SOURCE_REPOSITORY/compare/$baseline...$env:SOURCE_COMMIT" --jq .status
+            if ($LASTEXITCODE -or $comparison -notin @('ahead','identical')) { throw 'Acceptance baseline is not an ancestor' }
+          } elseif ($validated.acceptance.mode -cne 'fresh') {
+            throw 'Unknown Windows acceptance mode'
+          }
+          $validation | Set-Content (Join-Path $env:RUNNER_TEMP 'validated-windows-candidate.json') -Encoding utf8
           $helper = gh api "repos/$env:SOURCE_REPOSITORY/contents/scripts/verify-bundled-documents.mjs?ref=$env:SOURCE_COMMIT" --jq .content
           if ($LASTEXITCODE) { throw 'Exact-source document probe unavailable' }
           [IO.File]::WriteAllBytes((Join-Path $env:RUNNER_TEMP 'verify-bundled-documents.mjs'), [Convert]::FromBase64String(($helper -join "")))
-          $evidence = Get-Content staging/acceptance-windows-x64.json -Raw | ConvertFrom-Json
-          if ($evidence.sourceCommit -cne $env:SOURCE_COMMIT -or !$evidence.verificationReuse.ownerAuthorized) { throw 'Explicit acceptance reuse evidence required' }
-          $baseline = $evidence.verificationReuse.baselineSource
-          if ($baseline -notmatch '^[a-f0-9]{40}$') { throw 'Invalid acceptance baseline' }
-          $comparison = gh api "repos/$env:SOURCE_REPOSITORY/compare/$baseline...$env:SOURCE_COMMIT" --jq .status
-          if ($LASTEXITCODE -or $comparison -notin @('ahead','identical')) { throw 'Acceptance baseline is not an ancestor' }
 
       - name: Verify Microsoft signatures, extracted app and paired WSL bytes
         shell: pwsh
@@ -112,9 +119,24 @@ jobs:
           $probe = Start-Process -FilePath $exe -ArgumentList @(('"' + $helper + '"'),('"' + $entry + '"')) -Wait -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
           if ($probe.ExitCode -ne 0) { Get-Content $stderr; throw 'Final signed Electron PDF/DOCX worker failed' }
           Remove-Item Env:ELECTRON_RUN_AS_NODE
+          $validated = Get-Content (Join-Path $env:RUNNER_TEMP 'validated-windows-candidate.json') -Raw | ConvertFrom-Json
           $nativeVersion = & $native --version
-          if ($LASTEXITCODE -or "$nativeVersion" -notmatch 'kolvra-native2-ffc2f4f3cae5693a') { throw 'Native identity differs' }
-          $proof = [ordered]@{ sourceCommit=$env:SOURCE_COMMIT; version=$env:VERSION; workflowRun=$env:GITHUB_RUN_ID; installerSha256=(Get-FileHash $installer -Algorithm SHA256).Hash.ToLowerInvariant(); appSha256=(Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant(); signatures='Valid company signatures and Microsoft timestamps'; pairedWsl='verified'; packagedServerVersion='passed'; packagedDocuments='passed'; nativeIdentity='passed'; acceptance='Owner-authorized baseline reuse recorded in acceptance-windows-x64.json; installation lifecycle was not repeated here' }
+          if ($LASTEXITCODE -or ($nativeVersion -join "`n").Trim() -cne $validated.nativeVersion) { throw 'Native identity differs from the exact app source' }
+          $proof = [ordered]@{
+            sourceCommit=$env:SOURCE_COMMIT
+            version=$env:VERSION
+            workflowRun=$env:GITHUB_RUN_ID
+            installerSha256=(Get-FileHash $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+            appSha256=(Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+            signatures='Valid company signatures and Microsoft timestamps'
+            pairedWsl='verified'
+            packagedServerVersion='passed'
+            packagedDocuments='passed'
+            nativeIdentity='passed'
+            nativeVersion=$validated.nativeVersion
+            acceptanceMode=$validated.acceptance.mode
+          }
+          if ($validated.acceptance.mode -ceq 'reuse') { $proof.acceptanceBaseline = $validated.acceptance.baselineSource }
           $proof | ConvertTo-Json | Set-Content verified-windows-local.json -Encoding utf8
           "Verified local source $env:SOURCE_COMMIT, signatures, exact payload, WSL archive, versions and all declared hashes. No compilation, signing or installation performed." >> $env:GITHUB_STEP_SUMMARY
 
@@ -128,7 +150,8 @@ jobs:
           gh release view $tag --repo $env:RELEASE_REPOSITORY 2>$null
           if ($LASTEXITCODE -eq 0) { throw 'Release exists; preserve immutable assets and resume its failed phase explicitly' }
           $notes = Join-Path $env:RUNNER_TEMP 'release-notes.txt'
-          "Signed Windows candidate verified by protected workflow $env:GITHUB_RUN_ID. Draft awaits the remaining platforms. App source $env:SOURCE_COMMIT; acceptance reuse is recorded explicitly." | Set-Content $notes
+          $proof = Get-Content verified-windows-local.json -Raw | ConvertFrom-Json
+          "Signed Windows candidate verified by protected workflow $env:GITHUB_RUN_ID. Draft awaits the remaining platforms. App source $env:SOURCE_COMMIT. Windows acceptance mode: $($proof.acceptanceMode)." | Set-Content $notes
           $assets = @(Get-ChildItem staging -File | ForEach-Object FullName)
           $assets += (Resolve-Path verified-windows-local.json).Path
           gh release create $tag @assets --repo $env:RELEASE_REPOSITORY --target $env:GITHUB_SHA --title "Kolvra $env:VERSION" --notes-file $notes --draft

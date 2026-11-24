@@ -84,10 +84,12 @@ contains only the signed installer, blockmap, paired WSL archive, `latest.yml`,
 The workflow verifies the source commit, complete manifest and hashes, public
 updater feed, Microsoft-trusted company signatures and timestamps on the installer,
 extracted app and native runtime, signed WSL archive binding, and actual packaged
-server/native versions on Windows. Acceptance reuse must identify an explicitly
-authorized ancestor baseline. It performs no build, signing or installation and
-never reports reused lifecycle checks as fresh. It creates a draft only; assemble
-and verify macOS and Linux assets before publishing the combined release.
+server/native versions on Windows. The native version comes from the patch series
+at the exact app source commit. A fresh acceptance receipt covers installation,
+startup, update, retained data, recovery, and uninstall for the exact installer
+SHA-256. Acceptance reuse requires explicit owner authorization and an ancestor
+baseline. The workflow verifies the provided evidence and creates a draft.
+Assemble and verify macOS and Linux assets before publishing the combined release.
 
 Detailed build and acceptance logs stay private. The public draft includes the
 sanitized acceptance record and the workflow's independent verification receipt.
