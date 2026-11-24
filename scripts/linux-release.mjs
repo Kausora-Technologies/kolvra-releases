@@ -11,6 +11,7 @@ const checksumName = 'SHA256SUMS-linux-x64';
 const manifestName = 'candidate-linux-x64.json';
 const evidenceName = 'acceptance-linux-x64.json';
 const publicKeyName = 'kolvra-linux-signing-key.asc';
+const appImageName = 'Kolvra-x86_64.AppImage';
 const trustedKey = fileURLToPath(new URL('../keys/kolvra-linux-signing-key.asc', import.meta.url));
 const requiredChecks = ['packagedStartup', 'assistantGateway', 'terminal', 'localInference', 'restartPersistence', 'updater'];
 
@@ -47,6 +48,13 @@ function validateIdentity(version, commit, fingerprint) {
   assert.match(version, /^\d+\.\d+\.\d+(?:-rc\.[1-9]\d*)?$/);
   assert.match(commit, /^[a-f0-9]{40}$/);
   assert.match(fingerprint, /^[A-F0-9]{40}$/);
+}
+
+function selectAppImageName(names, version) {
+  const legacyName = `Kolvra-${version}-x86_64.AppImage`;
+  const matches = names.filter(name => name === appImageName || name === legacyName);
+  assert.equal(matches.length, 1, 'Expected exactly one current or matching legacy AppImage.');
+  return matches[0];
 }
 
 function validateDebian(directory, version, artifact, evidence) {
@@ -121,17 +129,18 @@ export async function validateUpdater(directory, version, artifact, debian) {
 export async function prepareLinuxRelease({ directory, version, commit, keyHome, fingerprint, evidencePath }) {
   validateIdentity(version, commit, fingerprint);
   const initialNames = await readdir(directory);
+  const artifactName = selectAppImageName(initialNames, version);
   const debianName = `Kolvra-${version}-amd64.deb`;
-  assert.deepEqual(initialNames.sort(), [`Kolvra-${version}-x86_64.AppImage`, 'latest-linux.yml', ...(initialNames.includes(debianName) ? [debianName] : [])].sort(), 'Prepare a fresh directory containing only the AppImage, optional Debian package, and updater metadata.');
+  assert.deepEqual(initialNames.sort(), [artifactName, 'latest-linux.yml', ...(initialNames.includes(debianName) ? [debianName] : [])].sort(), 'Prepare a fresh directory containing only the AppImage, optional Debian package, and updater metadata.');
   const artifacts = [];
-  for (const name of await readdir(directory)) {
+  for (const name of initialNames) {
     const file = path.join(directory, name);
     const metadata = await lstat(file);
     assert(metadata.isFile() && !metadata.isSymbolicLink());
     artifacts.push({ name, bytes: metadata.size, sha256: await digest(file) });
   }
   artifacts.sort((a, b) => a.name.localeCompare(b.name));
-  const artifact = artifacts.find(file => file.name.endsWith('.AppImage'));
+  const artifact = artifacts.find(file => file.name === artifactName);
   const debian = artifacts.find(file => file.name === debianName);
   await validateUpdater(directory, version, artifact, debian);
   const evidence = JSON.parse(await readFile(evidencePath, 'utf8'));
@@ -183,10 +192,20 @@ export async function validateLinuxRelease({ directory, fingerprint, trustedPubl
     assert.equal(manifest.build_environment, 'local');
     assert.equal(manifest.update_feed, 'github:Kausora-Technologies/kolvra-releases');
     assert.deepEqual(manifest.target, { platform: 'linux', architecture: 'x64', signing: 'openpgp-detached', signing_fingerprint: fingerprint });
-    const artifactName = `Kolvra-${manifest.candidate_version}-x86_64.AppImage`;
+    const artifactNames = manifest.artifacts.map(item => item.name);
+    const artifactName = selectAppImageName(artifactNames, manifest.candidate_version);
     const debianName = `Kolvra-${manifest.candidate_version}-amd64.deb`;
     const debian = manifest.artifacts.find(item => item.name === debianName);
-    assert.deepEqual(manifest.artifacts.map(item => item.name).sort(), [artifactName, 'latest-linux.yml', ...(debian ? [debianName] : [])].sort());
+    assert.deepEqual(artifactNames.sort(), [artifactName, 'latest-linux.yml', ...(debian ? [debianName] : [])].sort());
+    const signedNames = [
+      ...artifactNames,
+      artifactName + '.asc',
+      ...(debian ? [debianName + '.asc'] : []),
+      manifestName,
+      evidenceName,
+      publicKeyName,
+    ];
+    assert.deepEqual([...entries.keys()].sort(), signedNames.sort(), 'Signed checksums must cover exactly the Linux release set.');
     for (const artifact of manifest.artifacts) {
       assert.equal(artifact.sha256, entries.get(artifact.name));
       assert.equal(artifact.bytes, (await lstat(path.join(directory, artifact.name))).size);

@@ -138,7 +138,7 @@ rotation before expiry, rather than silently trusting a key from a downloaded
 bundle.
 
 Prepare a fresh directory containing only the final
-`Kolvra-VERSION-x86_64.AppImage`, `Kolvra-VERSION-amd64.deb`, and `latest-linux.yml`, then run from this repository:
+`Kolvra-x86_64.AppImage`, `Kolvra-VERSION-amd64.deb`, and `latest-linux.yml`, then run from this repository. Preserve the matching `Kolvra-VERSION-x86_64.AppImage` name when qualifying an older release:
 
 ```sh
 node --test scripts/linux-release.test.mjs scripts/validate-windows-release.test.mjs

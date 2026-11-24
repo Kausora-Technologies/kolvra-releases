@@ -47,9 +47,10 @@ for (const withDebian of [false, true]) test(`Linux release ${withDebian ? 'with
   const sha512 = createHash('sha512').update(payload).digest('base64');
   const directory = path.join(root, 'release');
   await mkdir(directory);
-  const artifact = path.join(directory, 'Kolvra-1.2.3-x86_64.AppImage');
+  const appImageName = withDebian ? 'Kolvra-x86_64.AppImage' : 'Kolvra-1.2.3-x86_64.AppImage';
+  const artifact = path.join(directory, appImageName);
   await writeFile(artifact, payload);
-  await writeFile(path.join(directory, 'latest-linux.yml'), `version: 1.2.3\nfiles:\n  - url: Kolvra-1.2.3-x86_64.AppImage\n    sha512: ${sha512}\n    size: ${payload.length}\npath: Kolvra-1.2.3-x86_64.AppImage\nsha512: ${sha512}\n`);
+  await writeFile(path.join(directory, 'latest-linux.yml'), `version: 1.2.3\nfiles:\n  - url: ${appImageName}\n    sha512: ${sha512}\n    size: ${payload.length}\npath: ${appImageName}\nsha512: ${sha512}\n`);
   const evidencePath = path.join(root, 'evidence.json');
   const evidence = { artifactSha256: sha256, checks: Object.fromEntries(['packagedStartup', 'assistantGateway', 'terminal', 'localInference', 'restartPersistence', 'updater'].map(check => [check, 'passed'])) };
   await writeFile(evidencePath, JSON.stringify(evidence));
@@ -71,6 +72,18 @@ for (const withDebian of [false, true]) test(`Linux release ${withDebian ? 'with
   }
   const prepare = () => prepareLinuxRelease({ directory, version: '1.2.3', commit: 'a'.repeat(40), keyHome, fingerprint, evidencePath });
   const verify = () => validateLinuxRelease({ directory, fingerprint, trustedPublicKey });
+  if (withDebian) await t.test('rejects an ambiguous AppImage or a feed with a different name', async () => {
+    const other = 'Kolvra-1.2.3-x86_64.AppImage';
+    const extra = path.join(directory, other);
+    const updater = path.join(directory, 'latest-linux.yml');
+    const original = await readFile(updater, 'utf8');
+    await writeFile(extra, payload);
+    await assert.rejects(prepare, /exactly one current or matching legacy AppImage/);
+    await rm(extra);
+    await writeFile(updater, original.replaceAll(appImageName, other));
+    await assert.rejects(prepare, /Updater must list each accepted package exactly once/);
+    await writeFile(updater, original);
+  });
   await t.test('requires acceptance for the exact artifact', async () => {
     await writeFile(evidencePath, JSON.stringify({ ...evidence, artifactSha256: '0'.repeat(64) }));
     await assert.rejects(prepare, /Acceptance must describe these exact bytes/);
@@ -110,6 +123,21 @@ for (const withDebian of [false, true]) test(`Linux release ${withDebian ? 'with
     await writeFile(extra, 'unexpected');
     await assert.rejects(verify, /Release file set differs/);
     await rm(extra);
+  });
+  if (withDebian) await t.test('rejects an extra AppImage included in signed checksums outside the candidate manifest', async () => {
+    const name = 'Kolvra-1.2.3-x86_64.AppImage';
+    const extra = path.join(directory, name);
+    const checksum = path.join(directory, 'SHA256SUMS-linux-x64');
+    const signature = checksum + '.asc';
+    const original = await readFile(checksum);
+    const originalSignature = await readFile(signature);
+    await writeFile(extra, payload);
+    await writeFile(checksum, Buffer.concat([original, Buffer.from(`${sha256}  ${name}\n`)]));
+    gpg(['--yes', '--armor', '--detach-sign', '--output', signature, checksum]);
+    await assert.rejects(verify, /Signed checksums must cover exactly the Linux release set/);
+    await rm(extra);
+    await writeFile(checksum, original);
+    await writeFile(signature, originalSignature);
   });
   await t.test('rejects a modified checksum manifest before trusting its names', async () => {
     const checksum = path.join(directory, 'SHA256SUMS-linux-x64');
