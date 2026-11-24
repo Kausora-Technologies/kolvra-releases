@@ -39,7 +39,7 @@ through [Kolvra support](https://kolvra.com/support/).
 Open the `.deb` in your system's software installer, or run:
 
 ```sh
-sudo apt install ./Kolvra-0.3.22-amd64.deb
+sudo apt install ./Kolvra-0.3.23-amd64.deb
 ```
 
 Then open Kolvra from the application menu. From 0.3.13, in-app updates download
@@ -74,8 +74,8 @@ gpg --import kolvra-linux-signing-key.asc
 gpg --verify Kolvra-x86_64.AppImage.asc Kolvra-x86_64.AppImage
 ```
 
-For the Debian package, substitute `Kolvra-0.3.22-amd64.deb.asc` and
-`Kolvra-0.3.22-amd64.deb` in the verification command. If you downloaded another
+For the Debian package, substitute `Kolvra-0.3.23-amd64.deb.asc` and
+`Kolvra-0.3.23-amd64.deb` in the verification command. If you downloaded another
 release, use the actual filenames of the installer and its matching signature.
 
 Require a good signature from that exact fingerprint. GPG may also say the key
